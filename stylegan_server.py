@@ -1,287 +1,274 @@
 import os
 from io import BytesIO
-
 import argparse
 import numpy as np
-import random
 import sqlite3
+import uuid
 from flask import Flask, send_file, jsonify, render_template, request, send_from_directory
 
 from stylegan_gen import StyleGANGenerator
 
-
-class NoiseGenerator:
-    """Generate latent vectors with linear interpolation."""
-
-    def __init__(self, ns: int = 512, steps: int = 60):
-        self.noise_size = ns
-        self.n_steps = steps
-        self.current_step = steps  # trigger new leg on first call
-        self.z_start = None
-        self.z_end = None
-        self.vectors = None
-
-    def _start_new_leg(self):
-        if self.z_end is not None:
-            self.z_start = self.z_end
-        else:
-            self.z_start = np.random.randn(self.noise_size)
-        self.z_end = np.random.randn(self.noise_size)
-        ratios = np.linspace(0, 1, num=self.n_steps, dtype=np.float32)
-        self.vectors = np.array(
-            [(1.0 - r) * self.z_start + r * self.z_end for r in ratios],
-            dtype=np.float32,
-        )
-        self.current_step = 0
-
-    def __next__(self):
-        if self.current_step >= self.n_steps:
-            self._start_new_leg()
-        z = self.vectors[self.current_step]
-        self.current_step += 1
-        return z
-
-    def load_custom_path(self, custom_vectors):
-        """Loads a pre-computed numpy array of vectors for the walk."""
-        print(f"Loading custom path with {len(custom_vectors)} steps.")
-        self.vectors = custom_vectors
-        self.n_steps = len(custom_vectors)
-        self.current_step = 0
-
-
 # ----------------------------------------------------------------------------
-# Argument parsing
+# Argument parsing & Initial Setup
 # ----------------------------------------------------------------------------
-
-DEFAULT_NETWORK_PKL = (
-    "https://api.ngc.nvidia.com/v2/models/nvidia/research/stylegan3/versions/1/files/stylegan3-r-afhqv2-512x512.pkl"
-)
-
+DEFAULT_NETWORK_PKL = "https://api.ngc.nvidia.com/v2/models/nvidia/research/stylegan3/versions/1/files/stylegan3-r-afhqv2-512x512.pkl"
 parser = argparse.ArgumentParser()
-parser.add_argument(
-    "--network",
-    "--network-pkl",
-    dest="network_pkl",
-    type=str,
-    default=os.environ.get("NETWORK_PKL", DEFAULT_NETWORK_PKL),
-    help="Network pickle to load.",
-)
-parser.add_argument(
-    "--outdir",
-    type=str,
-    default=os.environ.get("outdir") or os.environ.get("OUTDIR"),
-    help="Directory to save generated images as JPG.",
-)
-parser.add_argument(
-    "--db-file",
-    type=str,
-    default="image_vectors.db",
-    help="Path to the SQLite database file.",
-)
-parser.add_argument(
-    "--steps",
-    type=int,
-    default=60,
-    help="Number of steps for each interpolation leg.",
-)
+parser.add_argument("--network-pkl", type=str, default=DEFAULT_NETWORK_PKL)
+parser.add_argument("--outdir", type=str, help="Directory to save generated images.")
+parser.add_argument("--db-file", type=str, default="walks.db")
+parser.add_argument("--steps", type=int, default=60, help="Steps per interpolation leg.")
 args, _ = parser.parse_known_args()
 
 NETWORK_PKL = args.network_pkl
 DB_FILE = args.db_file
-base_outdir = args.outdir
+outdir = args.outdir
 num_steps = args.steps
 
-# ----------------------------------------------------------------------------
-# Flask server setup
-# ----------------------------------------------------------------------------
+if outdir:
+    os.makedirs(outdir, exist_ok=True)
 
 app = Flask(__name__)
 
-# Load StyleGAN generator
+# ----------------------------------------------------------------------------
+# Global State & Generator Loading
+# ----------------------------------------------------------------------------
 base_generator = StyleGANGenerator(NETWORK_PKL)
-noise_gen = NoiseGenerator(ns=base_generator.z_dim, steps=num_steps)
-last_vector = None
 
-# Create a unique instance identifier and optional output directory for
-# logging generated images. Using a unique ID avoids overwriting files on
-# restart.
-instance_id = f"{random.randint(0, 99999999):08d}"
-if base_outdir:
-    outdir = os.path.join(base_outdir, instance_id)
-    os.makedirs(outdir, exist_ok=True)
-else:
-    outdir = None
-image_counter = 0
+# This global dictionary will hold the currently active walk's data
+current_walk = {
+    "walk_id": None,
+    "vectors": None,
+    "current_step": 0
+}
 
 # ----------------------------------------------------------------------------
-# Database setup
+# Database Helper Functions
 # ----------------------------------------------------------------------------
-
-
 def init_db():
-    """Initializes the database and ensures the table exists."""
+    """Initializes the database with the new two-table schema."""
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    # Create the walks table
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS walks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            type TEXT NOT NULL,
+            num_steps INTEGER NOT NULL,
+            vectors_blob BLOB NOT NULL,
+            model_pkl TEXT NOT NULL,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    # Create the generated_images table with a foreign key
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS generated_images (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            walk_id INTEGER NOT NULL,
+            step_index INTEGER NOT NULL,
+            filename TEXT NOT NULL UNIQUE,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (walk_id) REFERENCES walks (id)
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+def create_walk_record(name, type, vectors, model_pkl):
+    """Saves a new walk definition to the DB and returns its ID."""
+    vectors_blob = vectors.astype(np.float32).tobytes()
+    num_steps = len(vectors)
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     c.execute(
-        """
-        CREATE TABLE IF NOT EXISTS generated_images (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            instance_id TEXT NOT NULL,
-            filename TEXT NOT NULL UNIQUE,
-            vector BLOB NOT NULL,
-            model_pkl TEXT NOT NULL,
-            step INTEGER NOT NULL,
-            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-        )
-        """
+        "INSERT INTO walks (name, type, num_steps, vectors_blob, model_pkl) VALUES (?, ?, ?, ?, ?)",
+        (name, type, num_steps, vectors_blob, model_pkl)
+    )
+    new_walk_id = c.lastrowid
+    conn.commit()
+    conn.close()
+    return new_walk_id
+
+def add_image_record(walk_id, step_index, filename):
+    """Links a rendered image to a step in a walk."""
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute(
+        "INSERT INTO generated_images (walk_id, step_index, filename) VALUES (?, ?, ?)",
+        (walk_id, step_index, filename)
     )
     conn.commit()
     conn.close()
 
-
-def add_vector_record(instance_id, filename, vector, model_pkl, step):
-    """Adds a record linking a generated image to its latent vector."""
-    vector_blob = vector.astype(np.float32).tobytes()
+def get_walk_vectors(walk_id):
+    """Retrieves and decodes the vectors for a given walk ID."""
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-    try:
-        c.execute(
-            "INSERT INTO generated_images (instance_id, filename, vector, model_pkl, step) VALUES (?, ?, ?, ?, ?)",
-            (instance_id, filename, vector_blob, model_pkl, step),
-        )
-        conn.commit()
-    except sqlite3.Error as e:
-        print(f"Database error: {e}")
-    finally:
-        conn.close()
-
-
-def get_vector_from_db(filename, db_path):
-    """Retrieve a latent vector from the database given its filename."""
-    conn = sqlite3.connect(db_path)
-    c = conn.cursor()
-    c.execute("SELECT vector FROM generated_images WHERE filename = ?", (filename,))
+    c.execute("SELECT vectors_blob FROM walks WHERE id = ?", (walk_id,))
     result = c.fetchone()
     conn.close()
     if result:
-        return np.frombuffer(result[0], dtype=np.float32)
+        return np.frombuffer(result[0], dtype=np.float32).reshape(-1, base_generator.z_dim)
     return None
 
-# Precompute model information for the index page
-model_name = os.path.basename(NETWORK_PKL)
-image_size = getattr(base_generator.G, "img_resolution", "unknown")
-model_params = sum(p.numel() for p in base_generator.G.parameters())
-model_mode = "training" if base_generator.G.training else "eval"
-device = str(base_generator.device)
-precision = base_generator.precision
-noise_size = noise_gen.noise_size
-
-
-@app.route("/gallery")
-def gallery_page():
-    """Renders a page showing all generated images."""
+def get_vector_by_image_id(image_id):
+    """Gets a single vector by looking up an image's walk and step."""
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-    c.execute("SELECT filename FROM generated_images ORDER BY id DESC")
-    image_files = [row[0] for row in c.fetchall()]
+    # Find the walk and step for the image
+    c.execute("SELECT walk_id, step_index FROM generated_images WHERE id = ?", (image_id,))
+    result = c.fetchone()
+    if not result:
+        conn.close()
+        return None
+    walk_id, step_index = result
+
+    # Retrieve the entire vector blob for that walk
+    c.execute("SELECT vectors_blob, num_steps FROM walks WHERE id = ?", (walk_id,))
+    blob_result = c.fetchone()
     conn.close()
-    return render_template("gallery.html", images=image_files, title="Image Gallery")
+    if blob_result:
+        vectors_blob, num_steps = blob_result
+        all_vectors = np.frombuffer(vectors_blob, dtype=np.float32).reshape(num_steps, -1)
+        # Return the specific vector at the correct index
+        return all_vectors[step_index]
+    return None
 
-
-@app.route("/generated_images/<path:filename>")
-def serve_generated_image(filename):
-    """Serves a file from the configured output directory."""
-    return send_from_directory(outdir, filename)
-
-
-@app.route("/create_custom_walk", methods=["POST"])
-def create_custom_walk():
-    """Creates an interpolated walk from a list of selected image filenames."""
-    data = request.get_json()
-    if not data or "filenames" not in data:
-        return jsonify({"status": "error", "message": "Missing filenames"}), 400
-
-    filenames = data.get("filenames")
-    steps_per_leg = data.get("steps", 60)
-
-    if len(filenames) < 2:
-        return jsonify({"status": "error", "message": "Select at least two images"}), 400
-
-    keyframe_vectors = [get_vector_from_db(fname, DB_FILE) for fname in filenames]
-    keyframe_vectors = [v for v in keyframe_vectors if v is not None]
-
-    full_path = []
-    for i in range(len(keyframe_vectors) - 1):
-        z_start = keyframe_vectors[i]
-        z_end = keyframe_vectors[i + 1]
-        ratios = np.linspace(0, 1, num=steps_per_leg, dtype=np.float32)
-        segment = np.array(
-            [(1.0 - r) * z_start + r * z_end for r in ratios], dtype=np.float32
-        )
-        full_path.extend(segment)
-
-    if full_path:
-        noise_gen.load_custom_path(np.array(full_path, dtype=np.float32))
-        global last_vector
-        last_vector = None
-        return jsonify({"status": "success", "total_steps": len(full_path)})
-    else:
-        return jsonify({"status": "error", "message": "Could not create path"}), 500
-
+# ----------------------------------------------------------------------------
+# Flask Routes
+# ----------------------------------------------------------------------------
 
 @app.route("/")
 def index_page():
     """Serve the client-side interface."""
-    return render_template(
-        "index.html",
-        title="Home",
-        model_name=model_name,
-        image_size=image_size,
-        model_params=model_params,
-        model_mode=model_mode,
-        device=device,
-        precision=precision,
-        noise_size=noise_size,
-        noise_step=noise_gen.current_step,
-        noise_total_steps=noise_gen.n_steps,
-    )
+    return render_template("index.html", title="Home")
 
 
-@app.route("/start", methods=["POST"])
-def start_walk():
-    """Start a new interpolation sequence."""
-    global last_vector
-    noise_gen._start_new_leg()
-    last_vector = None
-    return jsonify({"status": "started"})
+@app.route("/start_random_walk", methods=["POST"])
+def start_random_walk():
+    """Defines a new random walk, saves it, and loads it for rendering."""
+    z_start = np.random.randn(base_generator.z_dim)
+    z_end = np.random.randn(base_generator.z_dim)
+    ratios = np.linspace(0, 1, num=num_steps, dtype=np.float32)
+    vectors = np.array([(1.0 - r) * z_start + r * z_end for r in ratios], dtype=np.float32)
+
+    walk_name = f"random_{uuid.uuid4().hex[:8]}"
+    walk_id = create_walk_record(walk_name, 'random', vectors, NETWORK_PKL)
+
+    # Load this new walk as the current one
+    current_walk["walk_id"] = walk_id
+    current_walk["vectors"] = vectors
+    current_walk["current_step"] = 0
+
+    return jsonify({"status": "created and loaded", "walk_id": walk_id, "name": walk_name})
 
 
-@app.route("/next", methods=["GET"])
+@app.route("/load_walk/<int:walk_id>", methods=["POST"])
+def load_walk(walk_id):
+    """Loads an existing walk's vectors into the active state for rendering."""
+    vectors = get_walk_vectors(walk_id)
+    if vectors is not None:
+        current_walk["walk_id"] = walk_id
+        current_walk["vectors"] = vectors
+        current_walk["current_step"] = 0
+        return jsonify({"status": "loaded", "walk_id": walk_id, "steps": len(vectors)})
+    return jsonify({"status": "error", "message": "Walk not found"}), 404
+
+
+@app.route("/next_image", methods=["GET"])
 def get_next_image():
-    """Return the next image in the latent walk."""
-    global last_vector, image_counter
-    z = next(noise_gen)
-    last_vector = z
-    step = noise_gen.current_step - 1
+    """Renders the next image from the currently loaded walk."""
+    if current_walk["walk_id"] is None or current_walk["vectors"] is None:
+        return jsonify({"error": "No walk is currently loaded. Please start or load one."}), 400
+
+    step = current_walk["current_step"]
+    if step >= len(current_walk["vectors"]):
+        return jsonify({"status": "walk complete"}), 404
+
+    z = current_walk["vectors"][step]
     img = base_generator.generate_image(z=z, truncation_psi=0.7)
+
     if outdir:
-        filename = f"{image_counter:06d}.jpg"
+        filename = f"walk_{current_walk['walk_id']:04d}_step_{step:04d}.jpg"
         img_path = os.path.join(outdir, filename)
         img.save(img_path, format="JPEG")
-        add_vector_record(instance_id, filename, z, NETWORK_PKL, step)
-        image_counter += 1
+        add_image_record(current_walk["walk_id"], step, filename)
+
+    current_walk["current_step"] += 1
+
     buf = BytesIO()
     img.save(buf, format="PNG")
     buf.seek(0)
     return send_file(buf, mimetype="image/png")
 
 
-@app.route("/vector", methods=["GET"])
-def current_vector():
-    """Return the latent vector used for the last generated image."""
-    if last_vector is None:
-        return jsonify({"vector": None}), 404
-    return jsonify({"vector": last_vector.tolist()})
+# --- Gallery and Custom Walk Creation Routes (Adapted for new schema) ---
+
+@app.route('/gallery')
+def gallery_page():
+    """Renders a gallery of all defined walks and their rendered images."""
+    conn = sqlite3.connect(DB_FILE)
+    # Fetch all walks first
+    walks_cursor = conn.cursor()
+    walks_cursor.execute("SELECT id, name, type, num_steps FROM walks ORDER BY id DESC")
+    all_walks = walks_cursor.fetchall()
+
+    # Fetch all rendered images and group them by walk_id
+    images_cursor = conn.cursor()
+    images_cursor.execute("SELECT id, walk_id, filename FROM generated_images")
+
+    images_by_walk = {}
+    for img_id, walk_id, filename in images_cursor.fetchall():
+        if walk_id not in images_by_walk:
+            images_by_walk[walk_id] = []
+        images_by_walk[walk_id].append({'id': img_id, 'filename': filename})
+
+    conn.close()
+    return render_template('gallery.html', walks=all_walks, images_by_walk=images_by_walk)
+
+
+@app.route('/generated_images/<path:filename>')
+def serve_generated_image(filename):
+    return send_from_directory(outdir, filename)
+
+
+@app.route('/create_custom_walk', methods=['POST'])
+def create_custom_walk():
+    """Creates a new walk definition from selected keyframe images."""
+    data = request.get_json()
+    image_ids = data.get('ids', [])
+    steps_per_leg = data.get('steps', num_steps)
+
+    if len(image_ids) < 2:
+        return jsonify({"status": "error", "message": "Select at least two images"}), 400
+
+    # Get the single vector for each selected keyframe image
+    keyframe_vectors = [get_vector_by_image_id(img_id) for img_id in image_ids]
+    keyframe_vectors = [v for v in keyframe_vectors if v is not None]
+
+    # Interpolate between keyframes
+    full_path = []
+    for i in range(len(keyframe_vectors) - 1):
+        z_start, z_end = keyframe_vectors[i], keyframe_vectors[i+1]
+        ratios = np.linspace(0, 1, num=steps_per_leg, dtype=np.float32)
+        segment = np.array([(1.0 - r) * z_start + r * z_end for r in ratios], dtype=np.float32)
+        full_path.extend(segment)
+
+    if full_path:
+        walk_name = f"curated_{uuid.uuid4().hex[:8]}"
+        vectors = np.array(full_path, dtype=np.float32)
+
+        # Save the new curated walk to the database
+        walk_id = create_walk_record(walk_name, 'curated', vectors, NETWORK_PKL)
+
+        # Automatically load it
+        current_walk["walk_id"] = walk_id
+        current_walk["vectors"] = vectors
+        current_walk["current_step"] = 0
+
+        return jsonify({"status": "success", "walk_id": walk_id, "name": walk_name})
+
+    return jsonify({"status": "error", "message": "Could not create path"}), 500
 
 
 if __name__ == "__main__":

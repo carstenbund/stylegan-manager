@@ -1,14 +1,15 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-g">
+    <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{{ title }}</title>
+    <title>Walk Gallery</title>
     <style>
         body { font-family: sans-serif; background-color: #f0f2f5; margin: 0; padding: 20px; }
-        h1, p { text-align: center; }
+        h1, h2, p { text-align: center; }
         a { color: #007bff; }
         .controls { text-align: center; margin-bottom: 20px; padding: 15px; background: #fff; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .walk { margin-bottom: 40px; }
         .gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 15px; }
         .img-container { position: relative; cursor: pointer; }
         .img-container img { width: 100%; height: auto; display: block; border-radius: 8px; transition: transform 0.2s; }
@@ -31,66 +32,65 @@
     </style>
 </head>
 <body>
-
-    <h1>Image Gallery</h1>
-    <p>Select images in the order you want to create the animation path. <a href="/">Back to Generator</a></p>
+    <h1>Walk Gallery</h1>
+    <p>Select images in the order you want to create a new walk. <a href="/">Back to Generator</a></p>
 
     <div class="controls">
         <button id="createWalkBtn">Create Custom Walk From Selection</button>
         <p id="status"></p>
     </div>
 
-    <div class="gallery">
-        {% for image_file in images %}
-        <label class="img-container">
-            <input type="checkbox" name="image_selection" value="{{ image_file }}">
-            <img src="{{ url_for('serve_generated_image', filename=image_file) }}" alt="{{ image_file }}" loading="lazy">
-            <div class="selection-order"></div>
-        </label>
-        {% endfor %}
+    {% for walk in walks %}
+    <div class="walk">
+        <h2>Walk {{ walk[0] }}: {{ walk[1] }} ({{ walk[2] }})</h2>
+        <div class="gallery">
+            {% for image in images_by_walk.get(walk[0], []) %}
+            <label class="img-container">
+                <input type="checkbox" name="image_selection" value="{{ image.id }}">
+                <img src="{{ url_for('serve_generated_image', filename=image.filename) }}" alt="{{ image.filename }}" loading="lazy">
+                <div class="selection-order"></div>
+            </label>
+            {% endfor %}
+        </div>
     </div>
+    {% endfor %}
 
     <script>
         document.addEventListener('DOMContentLoaded', () => {
             const createWalkBtn = document.getElementById('createWalkBtn');
             const statusEl = document.getElementById('status');
-            const gallery = document.querySelector('.gallery');
-            let selectedFiles = [];
+            let selectedIds = [];
 
-            gallery.addEventListener('change', (event) => {
-                if (event.target.type === 'checkbox') {
-                    const filename = event.target.value;
-                    const container = event.target.closest('.img-container');
-                    const orderBadge = container.querySelector('.selection-order');
+            document.querySelectorAll('.gallery').forEach(gallery => {
+                gallery.addEventListener('change', (event) => {
+                    if (event.target.type === 'checkbox') {
+                        const id = event.target.value;
+                        const container = event.target.closest('.img-container');
+                        const orderBadge = container.querySelector('.selection-order');
 
-                    if (event.target.checked) {
-                        selectedFiles.push(filename);
-                        orderBadge.textContent = selectedFiles.length;
-                    } else {
-                        const index = selectedFiles.indexOf(filename);
-                        if (index > -1) {
-                            selectedFiles.splice(index, 1);
+                        if (event.target.checked) {
+                            selectedIds.push(id);
+                            orderBadge.textContent = selectedIds.length;
+                        } else {
+                            const index = selectedIds.indexOf(id);
+                            if (index > -1) selectedIds.splice(index, 1);
+                            updateBadges();
                         }
-                        updateBadges();
                     }
-                }
+                });
             });
 
             function updateBadges() {
                 document.querySelectorAll('.img-container input').forEach(checkbox => {
-                    const filename = checkbox.value;
+                    const id = checkbox.value;
                     const orderBadge = checkbox.closest('.img-container').querySelector('.selection-order');
-                    const index = selectedFiles.indexOf(filename);
-                    if (index > -1) {
-                        orderBadge.textContent = index + 1;
-                    } else {
-                        orderBadge.textContent = '';
-                    }
+                    const index = selectedIds.indexOf(id);
+                    orderBadge.textContent = index > -1 ? index + 1 : '';
                 });
             }
 
             createWalkBtn.addEventListener('click', () => {
-                if (selectedFiles.length < 2) {
+                if (selectedIds.length < 2) {
                     alert('Please select at least two images to create a walk.');
                     return;
                 }
@@ -99,18 +99,13 @@
 
                 fetch('/create_custom_walk', {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        filenames: selectedFiles,
-                        steps: 60
-                    }),
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ ids: selectedIds, steps: 60 })
                 })
                 .then(response => response.json())
                 .then(data => {
                     if (data.status === 'success') {
-                        statusEl.textContent = `Success! New walk with ${data.total_steps} steps created.`;
+                        statusEl.textContent = `Success! New walk with ID ${data.walk_id} created.`;
                         alert('Custom walk created! You will now be redirected to the main page.');
                         window.location.href = '/';
                     } else {
@@ -125,6 +120,5 @@
             });
         });
     </script>
-
 </body>
 </html>

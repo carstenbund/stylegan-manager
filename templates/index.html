@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8" />
-    <title>StyleGAN Image Stream</title>
+    <title>StyleGAN Walk</title>
     <style>
         body { font-family: Arial, sans-serif; text-align: center; }
         img { max-width: 512px; width: 100%; height: auto; display: block; margin: 1rem auto; }
@@ -10,49 +10,35 @@
     </style>
 </head>
 <body>
-    <h1>StyleGAN Image Stream</h1>
+    <h1>StyleGAN Walk</h1>
     <div>
-        <button id="start">Start</button>
+        <button id="start">Start Random Walk</button>
         <button id="stop">Stop</button>
         <a href="/gallery">Gallery</a>
     </div>
     <img id="image" alt="Generated image" />
-
-    <div id="debug">
-        <h2>Debug Info</h2>
-        <ul>
-            <li><strong>Model Name:</strong> {{ model_name }}</li>
-            <li><strong>Image Size:</strong> {{ image_size }}</li>
-            <li><strong>Model Parameters:</strong> {{ model_params }}</li>
-            <li><strong>Model Mode:</strong> {{ model_mode }}</li>
-            <li><strong>Device:</strong> {{ device }}</li>
-            <li><strong>Precision:</strong> {{ precision }}</li>
-            <li><strong>Noise Size:</strong> {{ noise_size }}</li>
-            <li><strong>Noise Step:</strong> {{ noise_step }} / {{ noise_total_steps }}</li>
-        </ul>
-    </div>
-
     <script>
         let running = false;
 
         async function fetchLoop() {
             if (!running) return;
             try {
-                const response = await fetch('/next', { cache: 'no-cache' });
+                const response = await fetch('/next_image', { cache: 'no-cache' });
+                if (!response.ok) {
+                    running = false;
+                    return;
+                }
                 const blob = await response.blob();
                 document.getElementById('image').src = URL.createObjectURL(blob);
+                requestAnimationFrame(fetchLoop);
             } catch (err) {
                 console.error('Error fetching image:', err);
                 running = false;
-                return;
-            }
-            if (running) {
-                requestAnimationFrame(fetchLoop);
             }
         }
 
         document.getElementById('start').addEventListener('click', async () => {
-            await fetch('/start', { method: 'POST' });
+            await fetch('/start_random_walk', { method: 'POST' });
             running = true;
             fetchLoop();
         });
