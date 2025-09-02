@@ -55,6 +55,12 @@ noise_gen = NoiseGenerator(ns=base_generator.z_dim, steps=60)
 last_vector = None
 
 
+@app.route("/")
+def index_page():
+    """Serve the client-side interface."""
+    return send_file(os.path.join(os.path.dirname(__file__), "index.html"))
+
+
 @app.route("/start", methods=["POST"])
 def start_walk():
     """Start a new interpolation sequence."""
