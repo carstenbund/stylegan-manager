@@ -21,7 +21,7 @@ RUN pip install click scipy
 RUN pip install flask
 
 WORKDIR /workspace
-COPY . .
+#COPY . .
 
 ENTRYPOINT []
 CMD ["python3", "stylegan_server.py"]

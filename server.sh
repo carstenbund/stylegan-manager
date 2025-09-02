@@ -2,6 +2,7 @@
 
 sudo docker run -it --rm --runtime nvidia \
           -v `pwd`:/scratch --workdir /scratch \
+	  -p 5000:5000 \
           -e NVIDIA_VISIBLE_DEVICES=all \
           -e NVIDIA_DRIVER_CAPABILITIES=all \
           -e HOME=/scratch stylegan3  \
