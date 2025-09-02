@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-g">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ title }}</title>
+    <style>
+        body { font-family: sans-serif; background-color: #f0f2f5; margin: 0; padding: 20px; }
+        h1, p { text-align: center; }
+        a { color: #007bff; }
+        .controls { text-align: center; margin-bottom: 20px; padding: 15px; background: #fff; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 15px; }
+        .img-container { position: relative; cursor: pointer; }
+        .img-container img { width: 100%; height: auto; display: block; border-radius: 8px; transition: transform 0.2s; }
+        .img-container input { display: none; }
+        .img-container .selection-order {
+            position: absolute; top: 5px; right: 5px; background-color: #007bff; color: white;
+            width: 24px; height: 24px; border-radius: 50%; display: flex;
+            align-items: center; justify-content: center; font-weight: bold;
+            border: 2px solid white; display: none;
+        }
+        .img-container input:checked + img {
+            box-shadow: 0 0 0 4px #007bff;
+            transform: scale(0.95);
+        }
+        .img-container input:checked ~ .selection-order {
+            display: flex;
+        }
+        #createWalkBtn { padding: 10px 20px; font-size: 16px; cursor: pointer; border-radius: 5px; border: none; background-color: #28a745; color: white; }
+        #createWalkBtn:hover { background-color: #218838; }
+    </style>
+</head>
+<body>
+
+    <h1>Image Gallery</h1>
+    <p>Select images in the order you want to create the animation path. <a href="/">Back to Generator</a></p>
+
+    <div class="controls">
+        <button id="createWalkBtn">Create Custom Walk From Selection</button>
+        <p id="status"></p>
+    </div>
+
+    <div class="gallery">
+        {% for image_file in images %}
+        <label class="img-container">
+            <input type="checkbox" name="image_selection" value="{{ image_file }}">
+            <img src="{{ url_for('serve_generated_image', filename=image_file) }}" alt="{{ image_file }}" loading="lazy">
+            <div class="selection-order"></div>
+        </label>
+        {% endfor %}
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const createWalkBtn = document.getElementById('createWalkBtn');
+            const statusEl = document.getElementById('status');
+            const gallery = document.querySelector('.gallery');
+            let selectedFiles = [];
+
+            gallery.addEventListener('change', (event) => {
+                if (event.target.type === 'checkbox') {
+                    const filename = event.target.value;
+                    const container = event.target.closest('.img-container');
+                    const orderBadge = container.querySelector('.selection-order');
+
+                    if (event.target.checked) {
+                        selectedFiles.push(filename);
+                        orderBadge.textContent = selectedFiles.length;
+                    } else {
+                        const index = selectedFiles.indexOf(filename);
+                        if (index > -1) {
+                            selectedFiles.splice(index, 1);
+                        }
+                        updateBadges();
+                    }
+                }
+            });
+
+            function updateBadges() {
+                document.querySelectorAll('.img-container input').forEach(checkbox => {
+                    const filename = checkbox.value;
+                    const orderBadge = checkbox.closest('.img-container').querySelector('.selection-order');
+                    const index = selectedFiles.indexOf(filename);
+                    if (index > -1) {
+                        orderBadge.textContent = index + 1;
+                    } else {
+                        orderBadge.textContent = '';
+                    }
+                });
+            }
+
+            createWalkBtn.addEventListener('click', () => {
+                if (selectedFiles.length < 2) {
+                    alert('Please select at least two images to create a walk.');
+                    return;
+                }
+
+                statusEl.textContent = 'Creating custom walk...';
+
+                fetch('/create_custom_walk', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        filenames: selectedFiles,
+                        steps: 60
+                    }),
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.status === 'success') {
+                        statusEl.textContent = `Success! New walk with ${data.total_steps} steps created.`;
+                        alert('Custom walk created! You will now be redirected to the main page.');
+                        window.location.href = '/';
+                    } else {
+                        throw new Error(data.message);
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    statusEl.textContent = `Error: ${error.message}`;
+                    alert(`Error: ${error.message}`);
+                });
+            });
+        });
+    </script>
+
+</body>
+</html>
