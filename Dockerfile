@@ -20,7 +20,8 @@ RUN pip install imageio imageio-ffmpeg==0.4.4
 RUN pip install click scipy 
 
 WORKDIR /workspace
+COPY . .
 
 ENTRYPOINT []
-CMD ["/bin/bash"]
+CMD ["python3", "stylegan_server.py"]
 
