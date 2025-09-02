@@ -41,16 +41,43 @@ class NoiseGenerator:
 
 
 # ----------------------------------------------------------------------------
+# Argument parsing
+# ----------------------------------------------------------------------------
+
+DEFAULT_NETWORK_PKL = (
+    "https://api.ngc.nvidia.com/v2/models/nvidia/research/stylegan3/versions/1/files/stylegan3-r-afhqv2-512x512.pkl"
+)
+
+parser = argparse.ArgumentParser()
+parser.add_argument(
+    "--network",
+    "--network-pkl",
+    dest="network_pkl",
+    type=str,
+    default=os.environ.get("NETWORK_PKL", DEFAULT_NETWORK_PKL),
+    help="Network pickle to load.",
+)
+parser.add_argument(
+    "--outdir",
+    type=str,
+    default=os.environ.get("OUTDIR") or os.environ.get("outdir"),
+    help="Directory to save generated images as JPG.",
+)
+args, _ = parser.parse_known_args()
+
+NETWORK_PKL = args.network_pkl
+outdir = args.outdir
+if outdir:
+    os.makedirs(outdir, exist_ok=True)
+image_counter = 0
+
+# ----------------------------------------------------------------------------
 # Flask server setup
 # ----------------------------------------------------------------------------
 
 app = Flask(__name__)
 
 # Load StyleGAN generator
-NETWORK_PKL = os.environ.get(
-    "NETWORK_PKL",
-    "https://api.ngc.nvidia.com/v2/models/nvidia/research/stylegan3/versions/1/files/stylegan3-r-afhqv2-512x512.pkl",
-)
 base_generator = StyleGANGenerator(NETWORK_PKL)
 noise_gen = NoiseGenerator(ns=base_generator.z_dim, steps=60)
 last_vector = None
