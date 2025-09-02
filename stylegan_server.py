@@ -1,6 +1,7 @@
 import os
 from io import BytesIO
 
+import argparse
 import numpy as np
 from flask import Flask, send_file, jsonify, render_template
 
@@ -40,16 +41,43 @@ class NoiseGenerator:
 
 
 # ----------------------------------------------------------------------------
+# Argument parsing
+# ----------------------------------------------------------------------------
+
+DEFAULT_NETWORK_PKL = (
+    "https://api.ngc.nvidia.com/v2/models/nvidia/research/stylegan3/versions/1/files/stylegan3-r-afhqv2-512x512.pkl"
+)
+
+parser = argparse.ArgumentParser()
+parser.add_argument(
+    "--network",
+    "--network-pkl",
+    dest="network_pkl",
+    type=str,
+    default=os.environ.get("NETWORK_PKL", DEFAULT_NETWORK_PKL),
+    help="Network pickle to load.",
+)
+parser.add_argument(
+    "--outdir",
+    type=str,
+    default=os.environ.get("OUTDIR") or os.environ.get("outdir"),
+    help="Directory to save generated images as JPG.",
+)
+args, _ = parser.parse_known_args()
+
+NETWORK_PKL = args.network_pkl
+outdir = args.outdir
+if outdir:
+    os.makedirs(outdir, exist_ok=True)
+image_counter = 0
+
+# ----------------------------------------------------------------------------
 # Flask server setup
 # ----------------------------------------------------------------------------
 
 app = Flask(__name__)
 
 # Load StyleGAN generator
-NETWORK_PKL = os.environ.get(
-    "NETWORK_PKL",
-    "https://api.ngc.nvidia.com/v2/models/nvidia/research/stylegan3/versions/1/files/stylegan3-r-afhqv2-512x512.pkl",
-)
 base_generator = StyleGANGenerator(NETWORK_PKL)
 noise_gen = NoiseGenerator(ns=base_generator.z_dim, steps=60)
 last_vector = None
@@ -94,10 +122,14 @@ def start_walk():
 @app.route("/next", methods=["GET"])
 def get_next_image():
     """Return the next image in the latent walk."""
-    global last_vector
+    global last_vector, image_counter
     z = next(noise_gen)
     last_vector = z
     img = base_generator.generate_image(z=z, truncation_psi=0.7)
+    if outdir:
+        img_path = os.path.join(outdir, f"{image_counter:06d}.jpg")
+        img.save(img_path, format="JPEG")
+        image_counter += 1
     buf = BytesIO()
     img.save(buf, format="PNG")
     buf.seek(0)
