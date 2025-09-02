@@ -2,7 +2,7 @@ import os
 from io import BytesIO
 
 import numpy as np
-from flask import Flask, send_file, jsonify
+from flask import Flask, send_file, jsonify, render_template
 
 from stylegan_gen import StyleGANGenerator
 
@@ -54,11 +54,32 @@ base_generator = StyleGANGenerator(NETWORK_PKL)
 noise_gen = NoiseGenerator(ns=base_generator.z_dim, steps=60)
 last_vector = None
 
+# Precompute model information for the index page
+model_name = os.path.basename(NETWORK_PKL)
+image_size = getattr(base_generator.G, "img_resolution", "unknown")
+model_params = sum(p.numel() for p in base_generator.G.parameters())
+model_mode = "training" if base_generator.G.training else "eval"
+device = str(base_generator.device)
+precision = base_generator.precision
+noise_size = noise_gen.noise_size
+
 
 @app.route("/")
 def index_page():
     """Serve the client-side interface."""
-    return render_template('index.html', title='Home')
+    return render_template(
+        "index.html",
+        title="Home",
+        model_name=model_name,
+        image_size=image_size,
+        model_params=model_params,
+        model_mode=model_mode,
+        device=device,
+        precision=precision,
+        noise_size=noise_size,
+        noise_step=noise_gen.current_step,
+        noise_total_steps=noise_gen.n_steps,
+    )
 
 
 @app.route("/start", methods=["POST"])
