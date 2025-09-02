@@ -1,0 +1,89 @@
+import os
+from io import BytesIO
+
+import numpy as np
+from flask import Flask, send_file, jsonify
+
+from stylegan_gen import StyleGANGenerator
+
+
+class NoiseGenerator:
+    """Generate latent vectors with linear interpolation."""
+
+    def __init__(self, ns: int = 512, steps: int = 60):
+        self.noise_size = ns
+        self.n_steps = steps
+        self.current_step = steps  # trigger new leg on first call
+        self.z_start = None
+        self.z_end = None
+        self.vectors = None
+
+    def _start_new_leg(self):
+        if self.z_end is not None:
+            self.z_start = self.z_end
+        else:
+            self.z_start = np.random.randn(self.noise_size)
+        self.z_end = np.random.randn(self.noise_size)
+        ratios = np.linspace(0, 1, num=self.n_steps, dtype=np.float32)
+        self.vectors = np.array(
+            [(1.0 - r) * self.z_start + r * self.z_end for r in ratios],
+            dtype=np.float32,
+        )
+        self.current_step = 0
+
+    def __next__(self):
+        if self.current_step >= self.n_steps:
+            self._start_new_leg()
+        z = self.vectors[self.current_step]
+        self.current_step += 1
+        return z
+
+
+# ----------------------------------------------------------------------------
+# Flask server setup
+# ----------------------------------------------------------------------------
+
+app = Flask(__name__)
+
+# Load StyleGAN generator
+NETWORK_PKL = os.environ.get(
+    "NETWORK_PKL",
+    "https://api.ngc.nvidia.com/v2/models/nvidia/research/stylegan3/versions/1/files/stylegan3-r-afhqv2-512x512.pkl",
+)
+base_generator = StyleGANGenerator(NETWORK_PKL)
+noise_gen = NoiseGenerator(ns=base_generator.z_dim, steps=60)
+last_vector = None
+
+
+@app.route("/start", methods=["POST"])
+def start_walk():
+    """Start a new interpolation sequence."""
+    global last_vector
+    noise_gen._start_new_leg()
+    last_vector = None
+    return jsonify({"status": "started"})
+
+
+@app.route("/next", methods=["GET"])
+def get_next_image():
+    """Return the next image in the latent walk."""
+    global last_vector
+    z = next(noise_gen)
+    last_vector = z
+    img = base_generator.generate_image(z=z, truncation_psi=0.7)
+    buf = BytesIO()
+    img.save(buf, format="PNG")
+    buf.seek(0)
+    return send_file(buf, mimetype="image/png")
+
+
+@app.route("/vector", methods=["GET"])
+def current_vector():
+    """Return the latent vector used for the last generated image."""
+    if last_vector is None:
+        return jsonify({"vector": None}), 404
+    return jsonify({"vector": last_vector.tolist()})
+
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000)
