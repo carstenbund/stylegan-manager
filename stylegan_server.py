@@ -58,7 +58,7 @@ last_vector = None
 @app.route("/")
 def index_page():
     """Serve the client-side interface."""
-    return send_file(os.path.join(os.path.dirname(__file__), "index.html"))
+    return render_template('index.html', title='Home')
 
 
 @app.route("/start", methods=["POST"])
