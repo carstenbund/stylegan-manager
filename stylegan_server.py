@@ -4,6 +4,7 @@ from io import BytesIO
 import argparse
 import numpy as np
 import random
+import sqlite3
 from flask import Flask, send_file, jsonify, render_template
 
 from stylegan_gen import StyleGANGenerator
@@ -58,9 +59,30 @@ parser.add_argument(
     default=os.environ.get("NETWORK_PKL", DEFAULT_NETWORK_PKL),
     help="Network pickle to load.",
 )
+parser.add_argument(
+    "--outdir",
+    type=str,
+    default=os.environ.get("outdir") or os.environ.get("OUTDIR"),
+    help="Directory to save generated images as JPG.",
+)
+parser.add_argument(
+    "--db-file",
+    type=str,
+    default="image_vectors.db",
+    help="Path to the SQLite database file.",
+)
+parser.add_argument(
+    "--steps",
+    type=int,
+    default=60,
+    help="Number of steps for each interpolation leg.",
+)
 args, _ = parser.parse_known_args()
 
 NETWORK_PKL = args.network_pkl
+DB_FILE = args.db_file
+base_outdir = args.outdir
+num_steps = args.steps
 
 # ----------------------------------------------------------------------------
 # Flask server setup
@@ -70,28 +92,61 @@ app = Flask(__name__)
 
 # Load StyleGAN generator
 base_generator = StyleGANGenerator(NETWORK_PKL)
-noise_gen = NoiseGenerator(ns=base_generator.z_dim, steps=60)
+noise_gen = NoiseGenerator(ns=base_generator.z_dim, steps=num_steps)
 last_vector = None
 
-# Optional directory for logging generated images. Create a unique
-# subfolder for each server instance to avoid overwriting files on
+# Create a unique instance identifier and optional output directory for
+# logging generated images. Using a unique ID avoids overwriting files on
 # restart.
-parser = argparse.ArgumentParser()
-parser.add_argument(
-    "--outdir",
-    type=str,
-    default=os.environ.get("outdir") or os.environ.get("OUTDIR"),
-    help="Directory to save generated images as JPG.",
-)
-args, _ = parser.parse_known_args()
-base_outdir = args.outdir
+instance_id = f"{random.randint(0, 99999999):08d}"
 if base_outdir:
-    instance_id = f"{random.randint(0, 99999999):08d}"
     outdir = os.path.join(base_outdir, instance_id)
     os.makedirs(outdir, exist_ok=True)
 else:
     outdir = None
 image_counter = 0
+
+# ----------------------------------------------------------------------------
+# Database setup
+# ----------------------------------------------------------------------------
+
+
+def init_db():
+    """Initializes the database and ensures the table exists."""
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute(
+        """
+        CREATE TABLE IF NOT EXISTS generated_images (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            instance_id TEXT NOT NULL,
+            filename TEXT NOT NULL UNIQUE,
+            vector BLOB NOT NULL,
+            model_pkl TEXT NOT NULL,
+            step INTEGER NOT NULL,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    conn.commit()
+    conn.close()
+
+
+def add_vector_record(instance_id, filename, vector, model_pkl, step):
+    """Adds a record linking a generated image to its latent vector."""
+    vector_blob = vector.astype(np.float32).tobytes()
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    try:
+        c.execute(
+            "INSERT INTO generated_images (instance_id, filename, vector, model_pkl, step) VALUES (?, ?, ?, ?, ?)",
+            (instance_id, filename, vector_blob, model_pkl, step),
+        )
+        conn.commit()
+    except sqlite3.Error as e:
+        print(f"Database error: {e}")
+    finally:
+        conn.close()
 
 # Precompute model information for the index page
 model_name = os.path.basename(NETWORK_PKL)
@@ -136,10 +191,13 @@ def get_next_image():
     global last_vector, image_counter
     z = next(noise_gen)
     last_vector = z
+    step = noise_gen.current_step - 1
     img = base_generator.generate_image(z=z, truncation_psi=0.7)
     if outdir:
-        img_path = os.path.join(outdir, f"{image_counter:06d}.jpg")
+        filename = f"{image_counter:06d}.jpg"
+        img_path = os.path.join(outdir, filename)
         img.save(img_path, format="JPEG")
+        add_vector_record(instance_id, filename, z, NETWORK_PKL, step)
         image_counter += 1
     buf = BytesIO()
     img.save(buf, format="PNG")
@@ -156,4 +214,5 @@ def current_vector():
 
 
 if __name__ == "__main__":
+    init_db()
     app.run(host="0.0.0.0", port=5000)
