@@ -26,16 +26,14 @@ python stylegan_server.py
 Generate images by performing a latent walk:
 
 ```bash
-# start a new interpolation sequence
-curl -X POST http://localhost:5000/start
+# define a random walk and load it
+curl -X POST http://localhost:5000/start_random_walk
 
-# fetch the next image (PNG binary response)
-curl -o frame.png http://localhost:5000/next
-
-# retrieve the latent vector used for the last image
-curl http://localhost:5000/vector
+# fetch the next image in the walk (PNG binary response)
+curl -o frame.png http://localhost:5000/next_image
 ```
 
-Repeated calls to `/next` continue the interpolation. Restart the sequence by
-calling `/start` again.
+Visit `http://localhost:5000/gallery` to browse saved walks and images. The
+gallery interface also allows creating curated walks by interpolating between
+selected keyframes.
 
