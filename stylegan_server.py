@@ -3,6 +3,7 @@ from io import BytesIO
 
 import argparse
 import numpy as np
+import random
 from flask import Flask, send_file, jsonify, render_template
 
 from stylegan_gen import StyleGANGenerator
@@ -57,19 +58,9 @@ parser.add_argument(
     default=os.environ.get("NETWORK_PKL", DEFAULT_NETWORK_PKL),
     help="Network pickle to load.",
 )
-parser.add_argument(
-    "--outdir",
-    type=str,
-    default=os.environ.get("OUTDIR") or os.environ.get("outdir"),
-    help="Directory to save generated images as JPG.",
-)
 args, _ = parser.parse_known_args()
 
 NETWORK_PKL = args.network_pkl
-outdir = args.outdir
-if outdir:
-    os.makedirs(outdir, exist_ok=True)
-image_counter = 0
 
 # ----------------------------------------------------------------------------
 # Flask server setup
@@ -82,7 +73,9 @@ base_generator = StyleGANGenerator(NETWORK_PKL)
 noise_gen = NoiseGenerator(ns=base_generator.z_dim, steps=60)
 last_vector = None
 
-# Optional directory for logging generated images.
+# Optional directory for logging generated images. Create a unique
+# subfolder for each server instance to avoid overwriting files on
+# restart.
 parser = argparse.ArgumentParser()
 parser.add_argument(
     "--outdir",
@@ -91,9 +84,13 @@ parser.add_argument(
     help="Directory to save generated images as JPG.",
 )
 args, _ = parser.parse_known_args()
-outdir = args.outdir
-if outdir:
+base_outdir = args.outdir
+if base_outdir:
+    instance_id = f"{random.randint(0, 99999999):08d}"
+    outdir = os.path.join(base_outdir, instance_id)
     os.makedirs(outdir, exist_ok=True)
+else:
+    outdir = None
 image_counter = 0
 
 # Precompute model information for the index page
