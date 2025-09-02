@@ -1,6 +1,7 @@
 import os
 from io import BytesIO
 
+import argparse
 import numpy as np
 from flask import Flask, send_file, jsonify, render_template
 
@@ -54,6 +55,20 @@ base_generator = StyleGANGenerator(NETWORK_PKL)
 noise_gen = NoiseGenerator(ns=base_generator.z_dim, steps=60)
 last_vector = None
 
+# Optional directory for logging generated images.
+parser = argparse.ArgumentParser()
+parser.add_argument(
+    "--outdir",
+    type=str,
+    default=os.environ.get("outdir") or os.environ.get("OUTDIR"),
+    help="Directory to save generated images as JPG.",
+)
+args, _ = parser.parse_known_args()
+outdir = args.outdir
+if outdir:
+    os.makedirs(outdir, exist_ok=True)
+image_counter = 0
+
 # Precompute model information for the index page
 model_name = os.path.basename(NETWORK_PKL)
 image_size = getattr(base_generator.G, "img_resolution", "unknown")
@@ -94,10 +109,14 @@ def start_walk():
 @app.route("/next", methods=["GET"])
 def get_next_image():
     """Return the next image in the latent walk."""
-    global last_vector
+    global last_vector, image_counter
     z = next(noise_gen)
     last_vector = z
     img = base_generator.generate_image(z=z, truncation_psi=0.7)
+    if outdir:
+        img_path = os.path.join(outdir, f"{image_counter:06d}.jpg")
+        img.save(img_path, format="JPEG")
+        image_counter += 1
     buf = BytesIO()
     img.save(buf, format="PNG")
     buf.seek(0)
