@@ -12,7 +12,7 @@ class StyleGANGenerator:
     This class loads a pre-trained model from a .pkl file and provides a simple
     interface to generate images from latent vectors.
     """
-    def __init__(self, network_pkl: str, precision: str = 'fp16', device: torch.device = None):
+    def __init__(self, network_pkl: str, precision: str = 'fp32', device: torch.device = None):
         """
         Initializes the generator.
 

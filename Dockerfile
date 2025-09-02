@@ -4,7 +4,7 @@ ENV PYTHONDONTWRITEBYTECODE 1
 ENV PYTHONUNBUFFERED 1
 
 ENV TORCH_CUDA_ARCH_LIST="7.2;8.7"
-ENV MAX_JOBS=4  # or $(nproc)
+ENV MAX_JOBS=4 
 
 # Build tools + headers
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -18,6 +18,7 @@ RUN pip install --upgrade pip setuptools wheel pybind11
 # Your deps
 RUN pip install imageio imageio-ffmpeg==0.4.4 
 RUN pip install click scipy 
+RUN pip install flask
 
 WORKDIR /workspace
 COPY . .
