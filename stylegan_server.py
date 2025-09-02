@@ -5,7 +5,7 @@ import argparse
 import numpy as np
 import random
 import sqlite3
-from flask import Flask, send_file, jsonify, render_template
+from flask import Flask, send_file, jsonify, render_template, request, send_from_directory
 
 from stylegan_gen import StyleGANGenerator
 
@@ -40,6 +40,13 @@ class NoiseGenerator:
         z = self.vectors[self.current_step]
         self.current_step += 1
         return z
+
+    def load_custom_path(self, custom_vectors):
+        """Loads a pre-computed numpy array of vectors for the walk."""
+        print(f"Loading custom path with {len(custom_vectors)} steps.")
+        self.vectors = custom_vectors
+        self.n_steps = len(custom_vectors)
+        self.current_step = 0
 
 
 # ----------------------------------------------------------------------------
@@ -148,6 +155,18 @@ def add_vector_record(instance_id, filename, vector, model_pkl, step):
     finally:
         conn.close()
 
+
+def get_vector_from_db(filename, db_path):
+    """Retrieve a latent vector from the database given its filename."""
+    conn = sqlite3.connect(db_path)
+    c = conn.cursor()
+    c.execute("SELECT vector FROM generated_images WHERE filename = ?", (filename,))
+    result = c.fetchone()
+    conn.close()
+    if result:
+        return np.frombuffer(result[0], dtype=np.float32)
+    return None
+
 # Precompute model information for the index page
 model_name = os.path.basename(NETWORK_PKL)
 image_size = getattr(base_generator.G, "img_resolution", "unknown")
@@ -156,6 +175,58 @@ model_mode = "training" if base_generator.G.training else "eval"
 device = str(base_generator.device)
 precision = base_generator.precision
 noise_size = noise_gen.noise_size
+
+
+@app.route("/gallery")
+def gallery_page():
+    """Renders a page showing all generated images."""
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("SELECT filename FROM generated_images ORDER BY id DESC")
+    image_files = [row[0] for row in c.fetchall()]
+    conn.close()
+    return render_template("gallery.html", images=image_files, title="Image Gallery")
+
+
+@app.route("/generated_images/<path:filename>")
+def serve_generated_image(filename):
+    """Serves a file from the configured output directory."""
+    return send_from_directory(outdir, filename)
+
+
+@app.route("/create_custom_walk", methods=["POST"])
+def create_custom_walk():
+    """Creates an interpolated walk from a list of selected image filenames."""
+    data = request.get_json()
+    if not data or "filenames" not in data:
+        return jsonify({"status": "error", "message": "Missing filenames"}), 400
+
+    filenames = data.get("filenames")
+    steps_per_leg = data.get("steps", 60)
+
+    if len(filenames) < 2:
+        return jsonify({"status": "error", "message": "Select at least two images"}), 400
+
+    keyframe_vectors = [get_vector_from_db(fname, DB_FILE) for fname in filenames]
+    keyframe_vectors = [v for v in keyframe_vectors if v is not None]
+
+    full_path = []
+    for i in range(len(keyframe_vectors) - 1):
+        z_start = keyframe_vectors[i]
+        z_end = keyframe_vectors[i + 1]
+        ratios = np.linspace(0, 1, num=steps_per_leg, dtype=np.float32)
+        segment = np.array(
+            [(1.0 - r) * z_start + r * z_end for r in ratios], dtype=np.float32
+        )
+        full_path.extend(segment)
+
+    if full_path:
+        noise_gen.load_custom_path(np.array(full_path, dtype=np.float32))
+        global last_vector
+        last_vector = None
+        return jsonify({"status": "success", "total_steps": len(full_path)})
+    else:
+        return jsonify({"status": "error", "message": "Could not create path"}), 500
 
 
 @app.route("/")
