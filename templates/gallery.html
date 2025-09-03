@@ -31,6 +31,10 @@
         #createWalkBtn:hover { background-color: #218838; }
         .delete-walk { padding: 5px 10px; margin-left: 10px; font-size: 14px; cursor: pointer; border-radius: 4px; border: none; background-color: #dc3545; color: white; }
         .delete-walk:hover { background-color: #c82333; }
+        summary { cursor: pointer; list-style: none; }
+        summary::-webkit-details-marker { display: none; }
+        .thumbs { display: flex; gap: 10px; justify-content: center; margin-top: 10px; }
+        .thumbs img { width: 150px; height: auto; border-radius: 8px; }
     </style>
 </head>
 <body>
@@ -45,10 +49,21 @@
     </div>
 
     {% for walk in walks %}
-    <div class="walk">
-        <h2>Walk {{ walk[0] }}: {{ walk[1] }} ({{ walk[2] }}, step rate {{ walk[4] }}) <button class="delete-walk" data-walk-id="{{ walk[0] }}">Delete</button></h2>
+    {% set images = images_by_walk.get(walk[0], []) %}
+    <details class="walk">
+        <summary>
+            <h2>Walk {{ walk[0] }}: {{ walk[1] }} ({{ walk[2] }}, step rate {{ walk[4] }}) <button class="delete-walk" data-walk-id="{{ walk[0] }}" onclick="event.stopPropagation();">Delete</button></h2>
+            <div class="thumbs">
+                {% if images %}
+                <img src="{{ url_for('serve_generated_image', instance_id=images[0].instance_id, rand8=images[0].rand8, filename=images[0].filename) }}" alt="start image">
+                {% if images|length > 1 %}
+                <img src="{{ url_for('serve_generated_image', instance_id=images[-1].instance_id, rand8=images[-1].rand8, filename=images[-1].filename) }}" alt="end image">
+                {% endif %}
+                {% endif %}
+            </div>
+        </summary>
         <div class="gallery">
-            {% for image in images_by_walk.get(walk[0], []) %}
+            {% for image in images %}
             <label class="img-container">
                 <input type="checkbox" name="image_selection" value="{{ image.id }}">
                 <img src="{{ url_for('serve_generated_image', instance_id=image.instance_id, rand8=image.rand8, filename=image.filename) }}" alt="{{ image.filename }}" loading="lazy">
@@ -56,7 +71,7 @@
             </label>
             {% endfor %}
         </div>
-    </div>
+    </details>
     {% endfor %}
 
     <script>
