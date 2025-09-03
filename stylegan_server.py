@@ -140,6 +140,7 @@ def get_vector_by_image_id(image_id):
 # ----------------------------------------------------------------------------
 
 @app.route("/")
+@app.route("/index")
 def index_page():
     """Serve the client-side interface."""
     return render_template("index.html", title="Home")

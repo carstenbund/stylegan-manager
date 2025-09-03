@@ -12,7 +12,8 @@
 <body>
     <h1>StyleGAN Walk</h1>
     <div>
-        <button id="start">Start Random Walk</button>
+        <button id="play">Play</button>
+        <button id="startRandom">Start Random Walk</button>
         <button id="stop">Stop</button>
         <a href="/gallery">Gallery</a>
     </div>
@@ -37,7 +38,12 @@
             }
         }
 
-        document.getElementById('start').addEventListener('click', async () => {
+        document.getElementById('play').addEventListener('click', () => {
+            running = true;
+            fetchLoop();
+        });
+
+        document.getElementById('startRandom').addEventListener('click', async () => {
             await fetch('/start_random_walk', { method: 'POST' });
             running = true;
             fetchLoop();
@@ -46,6 +52,12 @@
         document.getElementById('stop').addEventListener('click', () => {
             running = false;
         });
+
+        const params = new URLSearchParams(window.location.search);
+        if (params.get('autoplay') === 'true') {
+            running = true;
+            fetchLoop();
+        }
     </script>
 </body>
 </html>

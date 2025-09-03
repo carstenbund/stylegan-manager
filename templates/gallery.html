@@ -107,7 +107,7 @@
                     if (data.status === 'success') {
                         statusEl.textContent = `Success! New walk with ID ${data.walk_id} created.`;
                         alert('Custom walk created! You will now be redirected to the main page.');
-                        window.location.href = '/';
+                        window.location.href = '/index?autoplay=true';
                     } else {
                         throw new Error(data.message);
                     }
