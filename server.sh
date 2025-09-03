@@ -1,7 +1,7 @@
 #!/bin/bash
 
 series=000500
-series=000084
+series=000100
 network=cdf
 network=demo
 resolution=512
@@ -18,6 +18,6 @@ sudo docker run -it --rm --runtime nvidia \
 	  -e NETWORK_PKL=${network_pkl} \
           -e HOME=/scratch stylegan_server  \
           python3 stylegan_server.py --outdir=${outdir} \
-                  --trunc=1 --seeds=${start_amount}-${amount} \
+                  --steps=10 \
                   --network_pkl=${network_pkl}
 
