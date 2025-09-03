@@ -5,6 +5,8 @@ import torch
 import legacy
 import dnnlib
 
+from utils import LatentInterpolator
+
 class StyleGANGenerator:
     """
     A wrapper for a pre-trained StyleGAN3 generator network.
@@ -89,33 +91,6 @@ class StyleGANGenerator:
         # 3. Post-Processing
         img_tensor = (img_tensor.float().permute(0, 2, 3, 1) * 127.5 + 128).clamp(0, 255).to(torch.uint8)
         return PIL.Image.fromarray(img_tensor[0].cpu().numpy(), 'RGB')
-
-
-class LatentInterpolator:
-    """
-    A helper to create smooth interpolations between latent vectors.
-    """
-    def __init__(self, z_dim: int, n_steps: int = 60):
-        self.z_dim = z_dim
-        self.n_steps = n_steps
-
-    def interpolate(self, z1: np.ndarray, z2: np.ndarray) -> np.ndarray:
-        """
-        Creates a linear interpolation between two latent vectors.
-
-        Args:
-            z1 (np.ndarray): The starting latent vector, shape [z_dim].
-            z2 (np.ndarray): The ending latent vector, shape [z_dim].
-
-        Returns:
-            np.ndarray: An array of interpolated latent vectors, shape [n_steps, z_dim].
-        """
-        ratios = np.linspace(0, 1, num=self.n_steps)
-        vectors = []
-        for ratio in ratios:
-            v = (1.0 - ratio) * z1 + ratio * z2
-            vectors.append(v)
-        return np.asarray(vectors)
 
 
 # ==============================================================================
