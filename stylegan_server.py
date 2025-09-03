@@ -5,6 +5,9 @@ import argparse
 import numpy as np
 import sqlite3
 import uuid
+import queue
+import threading
+import subprocess
 from flask import Flask, jsonify, render_template, request, send_from_directory
 
 from stylegan_gen import StyleGANGenerator
@@ -56,6 +59,9 @@ current_walk = {
     "vectors": None,
     "current_step": 0
 }
+
+# Queue for background rendering tasks
+render_queue = queue.Queue()
 
 # ----------------------------------------------------------------------------
 # Database Helper Functions
@@ -161,6 +167,41 @@ def get_vector_by_image_id(image_id):
     return None
 
 # ----------------------------------------------------------------------------
+# Background Worker for Rendering
+# ----------------------------------------------------------------------------
+
+def render_worker():
+    while True:
+        walk_id = render_queue.get()
+        try:
+            vectors = get_walk_vectors(walk_id)
+            if vectors is None:
+                continue
+            conn = sqlite3.connect(DB_FILE)
+            c = conn.cursor()
+            c.execute("SELECT step_index FROM generated_images WHERE walk_id = ?", (walk_id,))
+            existing = {row[0] for row in c.fetchall()}
+            conn.close()
+            for step, z in enumerate(vectors):
+                if step in existing:
+                    continue
+                img = base_generator.generate_image(z=z, truncation_psi=0.7)
+                if outdir:
+                    img_subdir = os.path.join(outdir, str(walk_id))
+                    os.makedirs(img_subdir, exist_ok=True)
+                    filename = f"step_{step:04d}.jpg"
+                    img_path = os.path.join(img_subdir, filename)
+                    img.save(img_path, format="JPEG")
+                    relpath = f"{walk_id}/{filename}"
+                    add_image_record(walk_id, step, relpath)
+        finally:
+            render_queue.task_done()
+
+
+worker_thread = threading.Thread(target=render_worker, daemon=True)
+worker_thread.start()
+
+# ----------------------------------------------------------------------------
 # Flask Routes
 # ----------------------------------------------------------------------------
 
@@ -210,6 +251,13 @@ def load_walk(walk_id):
         current_walk["current_step"] = 0
         return jsonify({"status": "loaded", "walk_id": walk_id, "steps": len(vectors)})
     return jsonify({"status": "error", "message": "Walk not found"}), 404
+
+
+@app.route("/enqueue_walk/<int:walk_id>", methods=["POST"])
+def enqueue_walk(walk_id):
+    """Adds a walk ID to the background rendering queue."""
+    render_queue.put(walk_id)
+    return jsonify({"status": "enqueued", "walk_id": walk_id})
 
 
 @app.route("/next_image", methods=["GET"])
