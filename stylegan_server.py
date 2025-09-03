@@ -12,10 +12,25 @@ from utils import LatentInterpolator
 # ----------------------------------------------------------------------------
 # Argument parsing & Initial Setup
 # ----------------------------------------------------------------------------
-DEFAULT_NETWORK_PKL = "https://api.ngc.nvidia.com/v2/models/nvidia/research/stylegan3/versions/1/files/stylegan3-r-afhqv2-512x512.pkl"
+DEFAULT_NETWORK_PKL = (
+    "https://api.ngc.nvidia.com/v2/models/nvidia/research/stylegan3/versions/1/files/stylegan3-r-afhqv2-512x512.pkl"
+)
+
 parser = argparse.ArgumentParser()
-parser.add_argument("--network-pkl", type=str, default=DEFAULT_NETWORK_PKL)
-parser.add_argument("--outdir", type=str, help="Directory to save generated images.")
+parser.add_argument(
+    "--network",
+    "--network-pkl",
+    dest="network_pkl",
+    type=str,
+    default=os.environ.get("NETWORK_PKL", DEFAULT_NETWORK_PKL),
+    help="Network pickle to load.",
+)
+parser.add_argument(
+    "--outdir",
+    type=str,
+    default=os.environ.get("outdir") or os.environ.get("OUTDIR"),
+    help="Directory to save generated images.",
+)
 parser.add_argument("--db-file", type=str, default="walks.db")
 parser.add_argument("--steps", type=int, default=60, help="Steps per interpolation leg.")
 args, _ = parser.parse_known_args()
