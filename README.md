@@ -39,15 +39,14 @@ selected keyframes.
 
 ## Output Directory Structure
 
-Generated images are now stored in a nested layout under the configured
-`outdir`:
+Generated images are stored in a layout where each walk has its own folder:
 
 ```
-<outdir>/<instance_id>/<rand8>/<filename>
+<outdir>/<walk_id>/<filename>
 ```
 
-`instance_id` identifies the running server instance (it can be overridden via
-the `INSTANCE_ID` environment variable) and `rand8` is a random eight-digit
-folder created for each rendered image. The relative path is stored in the
-database and used by the gallery when serving images.
+`walk_id` is the identifier of the walk in the database. Filenames only need to
+be unique within a given walk, allowing the same names to appear in different
+walk folders. The relative path is stored in the database and used by the
+gallery when serving images.
 

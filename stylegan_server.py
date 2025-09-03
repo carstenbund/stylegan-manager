@@ -5,7 +5,6 @@ import argparse
 import numpy as np
 import sqlite3
 import uuid
-import random
 from flask import Flask, jsonify, render_template, request, send_from_directory
 
 from stylegan_gen import StyleGANGenerator
@@ -43,10 +42,6 @@ num_steps = args.steps
 
 if outdir:
     os.makedirs(outdir, exist_ok=True)
-
-# Unique identifier for this server instance. Can be overridden via the
-# INSTANCE_ID environment variable for coordinating across multiple nodes.
-instance_id = os.environ.get("INSTANCE_ID", uuid.uuid4().hex)
 
 app = Flask(__name__)
 
@@ -120,7 +115,7 @@ def add_image_record(walk_id, step_index, relpath):
     """Links a rendered image to a step in a walk.
 
     The `relpath` should be the path relative to `outdir` in the format
-    `<instance_id>/<rand8>/<filename>`.
+    `<walk_id>/<filename>`.
     """
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
@@ -231,13 +226,12 @@ def get_next_image():
     img = base_generator.generate_image(z=z, truncation_psi=0.7)
 
     if outdir:
-        rand8 = random.randint(0, 99999999)
-        img_subdir = os.path.join(outdir, f"{instance_id}/{rand8:08d}")
+        img_subdir = os.path.join(outdir, f"{current_walk['walk_id']}")
         os.makedirs(img_subdir, exist_ok=True)
-        filename = f"walk_{current_walk['walk_id']:04d}_step_{step:04d}.jpg"
+        filename = f"step_{step:04d}.jpg"
         img_path = os.path.join(img_subdir, filename)
         img.save(img_path, format="JPEG")
-        relpath = f"{instance_id}/{rand8:08d}/{filename}"
+        relpath = f"{current_walk['walk_id']}/{filename}"
         add_image_record(current_walk["walk_id"], step, relpath)
 
     current_walk["current_step"] += 1
@@ -276,11 +270,9 @@ def gallery_page():
     for img_id, walk_id, relpath in images_cursor.fetchall():
         if walk_id not in images_by_walk:
             images_by_walk[walk_id] = []
-        inst, rand8, fname = relpath.split('/', 2)
+        fname = relpath.split('/', 1)[1] if '/' in relpath else relpath
         images_by_walk[walk_id].append({
             'id': img_id,
-            'instance_id': inst,
-            'rand8': rand8,
             'filename': fname,
         })
 
@@ -323,9 +315,9 @@ def delete_walk(walk_id):
 
     return jsonify({"status": "success", "walk_id": walk_id})
 
-@app.route('/generated_images/<instance_id>/<rand8>/<filename>')
-def serve_generated_image(instance_id, rand8, filename):
-    return send_from_directory(os.path.join(outdir, instance_id, rand8), filename)
+@app.route('/generated_images/<int:walk_id>/<filename>')
+def serve_generated_image(walk_id, filename):
+    return send_from_directory(os.path.join(outdir, str(walk_id)), filename)
 
 
 @app.route('/create_custom_walk', methods=['POST'])

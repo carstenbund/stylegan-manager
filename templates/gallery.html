@@ -55,9 +55,9 @@
             <h2>Walk {{ walk[0] }}: {{ walk[1] }} ({{ walk[2] }}, step rate {{ walk[4] }}) <button class="delete-walk" data-walk-id="{{ walk[0] }}" onclick="event.stopPropagation();">Delete</button></h2>
             <div class="thumbs">
                 {% if images %}
-                <img src="{{ url_for('serve_generated_image', instance_id=images[0].instance_id, rand8=images[0].rand8, filename=images[0].filename) }}" alt="start image">
+                <img src="{{ url_for('serve_generated_image', walk_id=walk[0], filename=images[0].filename) }}" alt="start image">
                 {% if images|length > 1 %}
-                <img src="{{ url_for('serve_generated_image', instance_id=images[-1].instance_id, rand8=images[-1].rand8, filename=images[-1].filename) }}" alt="end image">
+                <img src="{{ url_for('serve_generated_image', walk_id=walk[0], filename=images[-1].filename) }}" alt="end image">
                 {% endif %}
                 {% endif %}
             </div>
@@ -66,7 +66,7 @@
             {% for image in images %}
             <label class="img-container">
                 <input type="checkbox" name="image_selection" value="{{ image.id }}">
-                <img src="{{ url_for('serve_generated_image', instance_id=image.instance_id, rand8=image.rand8, filename=image.filename) }}" alt="{{ image.filename }}" loading="lazy">
+                <img src="{{ url_for('serve_generated_image', walk_id=walk[0], filename=image.filename) }}" alt="{{ image.filename }}" loading="lazy">
                 <div class="selection-order"></div>
             </label>
             {% endfor %}
