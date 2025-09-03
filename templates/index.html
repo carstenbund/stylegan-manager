@@ -7,6 +7,7 @@
         body { font-family: Arial, sans-serif; text-align: center; }
         img { max-width: 512px; width: 100%; height: auto; display: block; margin: 1rem auto; }
         button { margin: 0.5rem; padding: 0.5rem 1rem; font-size: 1rem; }
+        #stats { margin-top: 1rem; }
     </style>
 </head>
 <body>
@@ -18,6 +19,7 @@
         <a href="/gallery">Gallery</a>
     </div>
     <img id="image" alt="Generated image" />
+    <div id="stats"></div>
     <script>
         let running = false;
 
@@ -27,10 +29,13 @@
                 const response = await fetch('/next_image', { cache: 'no-cache' });
                 if (!response.ok) {
                     running = false;
+                    const err = await response.json().catch(() => ({}));
+                    document.getElementById('stats').textContent = err.status || err.error || 'Error';
                     return;
                 }
-                const blob = await response.blob();
-                document.getElementById('image').src = URL.createObjectURL(blob);
+                const data = await response.json();
+                document.getElementById('image').src = `data:image/png;base64,${data.image}`;
+                document.getElementById('stats').textContent = `Walk ${data.walk_id}: step ${data.step + 1} / ${data.total_steps}`;
                 requestAnimationFrame(fetchLoop);
             } catch (err) {
                 console.error('Error fetching image:', err);
