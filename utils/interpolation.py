@@ -1,4 +1,5 @@
 import numpy as np
+from typing import Optional
 
 class LatentInterpolator:
     """Helper class to create smooth interpolations in latent space."""
@@ -10,9 +11,10 @@ class LatentInterpolator:
     def interpolate(self, z1: np.ndarray, z2: np.ndarray) -> np.ndarray:
         """Linearly interpolate between two latent vectors."""
         ratios = np.linspace(0, 1, num=self.n_steps, dtype=np.float32)
-        return np.array([(1.0 - r) * z1 + r * z2 for r in ratios], dtype=np.float32)
+        # Broadcasting the operation is more efficient than a list comprehension
+        return (1.0 - ratios[:, np.newaxis]) * z1 + ratios[:, np.newaxis] * z2
 
-    def random_walk(self, num_segments: int = 1, start: np.ndarray | None = None, seed: int | None = None) -> np.ndarray:
+    def random_walk(self, num_segments: int = 1, start: Optional[np.ndarray] = None, seed: Optional[int] = None) -> np.ndarray:
         """
         Generate a random walk through latent space composed of multiple segments.
 
@@ -23,16 +25,23 @@ class LatentInterpolator:
 
         Returns:
             np.ndarray: Array of latent vectors forming the random walk with shape
-                [num_segments * n_steps, z_dim].
+                [num_segments * (n_steps - 1) + 1, z_dim].
         """
         rng = np.random.default_rng(seed)
-        current = rng.standard_normal(self.z_dim) if start is None else np.asarray(start, dtype=np.float32)
-        walk = []
-        for _ in range(num_segments):
-            next_vec = rng.standard_normal(self.z_dim)
+        current = rng.standard_normal(self.z_dim, dtype=np.float32) if start is None else np.asarray(start, dtype=np.float32)
+        
+        walk_segments = []
+        for i in range(num_segments):
+            next_vec = rng.standard_normal(self.z_dim, dtype=np.float32)
             segment = self.interpolate(current, next_vec)
-            if walk:
-                segment = segment[1:]  # Avoid duplicating boundary between segments
-            walk.append(segment)
+            
+            # To avoid duplicating the connection points, we skip the first element 
+            # of each new segment after the first one.
+            if i > 0:
+                walk_segments.append(segment[1:])
+            else:
+                walk_segments.append(segment)
+                
             current = next_vec
-        return np.vstack(walk)
+            
+        return np.vstack(walk_segments)
