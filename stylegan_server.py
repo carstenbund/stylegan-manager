@@ -7,6 +7,7 @@ import uuid
 from flask import Flask, send_file, jsonify, render_template, request, send_from_directory
 
 from stylegan_gen import StyleGANGenerator
+from utils import LatentInterpolator
 
 # ----------------------------------------------------------------------------
 # Argument parsing & Initial Setup
@@ -147,10 +148,14 @@ def index_page():
 @app.route("/start_random_walk", methods=["POST"])
 def start_random_walk():
     """Defines a new random walk, saves it, and loads it for rendering."""
-    z_start = np.random.randn(base_generator.z_dim)
-    z_end = np.random.randn(base_generator.z_dim)
-    ratios = np.linspace(0, 1, num=num_steps, dtype=np.float32)
-    vectors = np.array([(1.0 - r) * z_start + r * z_end for r in ratios], dtype=np.float32)
+    segments = 1
+    if request.is_json and "segments" in request.json:
+        segments = int(request.json["segments"])
+    else:
+        segments = int(request.args.get("segments", 1))
+
+    interpolator = LatentInterpolator(base_generator.z_dim, n_steps=num_steps)
+    vectors = interpolator.random_walk(num_segments=segments)
 
     walk_name = f"random_{uuid.uuid4().hex[:8]}"
     walk_id = create_walk_record(walk_name, 'random', vectors, NETWORK_PKL)
