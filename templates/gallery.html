@@ -47,7 +47,7 @@
             {% for image in images_by_walk.get(walk[0], []) %}
             <label class="img-container">
                 <input type="checkbox" name="image_selection" value="{{ image.id }}">
-                <img src="{{ url_for('serve_generated_image', filename=image.filename) }}" alt="{{ image.filename }}" loading="lazy">
+                <img src="{{ url_for('serve_generated_image', instance_id=image.instance_id, rand8=image.rand8, filename=image.filename) }}" alt="{{ image.filename }}" loading="lazy">
                 <div class="selection-order"></div>
             </label>
             {% endfor %}

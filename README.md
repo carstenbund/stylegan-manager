@@ -37,3 +37,17 @@ Visit `http://localhost:5000/gallery` to browse saved walks and images. The
 gallery interface also allows creating curated walks by interpolating between
 selected keyframes.
 
+## Output Directory Structure
+
+Generated images are now stored in a nested layout under the configured
+`outdir`:
+
+```
+<outdir>/<instance_id>/<rand8>/<filename>
+```
+
+`instance_id` identifies the running server instance (it can be overridden via
+the `INSTANCE_ID` environment variable) and `rand8` is a random eight-digit
+folder created for each rendered image. The relative path is stored in the
+database and used by the gallery when serving images.
+

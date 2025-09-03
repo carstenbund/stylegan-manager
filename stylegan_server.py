@@ -4,6 +4,7 @@ import argparse
 import numpy as np
 import sqlite3
 import uuid
+import random
 from flask import Flask, send_file, jsonify, render_template, request, send_from_directory
 
 from stylegan_gen import StyleGANGenerator
@@ -42,6 +43,10 @@ num_steps = args.steps
 
 if outdir:
     os.makedirs(outdir, exist_ok=True)
+
+# Unique identifier for this server instance. Can be overridden via the
+# INSTANCE_ID environment variable for coordinating across multiple nodes.
+instance_id = os.environ.get("INSTANCE_ID", uuid.uuid4().hex)
 
 app = Flask(__name__)
 
@@ -105,13 +110,17 @@ def create_walk_record(name, type, vectors, model_pkl):
     conn.close()
     return new_walk_id
 
-def add_image_record(walk_id, step_index, filename):
-    """Links a rendered image to a step in a walk."""
+def add_image_record(walk_id, step_index, relpath):
+    """Links a rendered image to a step in a walk.
+
+    The `relpath` should be the path relative to `outdir` in the format
+    `<instance_id>/<rand8>/<filename>`.
+    """
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     c.execute(
         "INSERT INTO generated_images (walk_id, step_index, filename) VALUES (?, ?, ?)",
-        (walk_id, step_index, filename)
+        (walk_id, step_index, relpath),
     )
     conn.commit()
     conn.close()
@@ -210,10 +219,14 @@ def get_next_image():
     img = base_generator.generate_image(z=z, truncation_psi=0.7)
 
     if outdir:
+        rand8 = random.randint(0, 99999999)
+        img_subdir = os.path.join(outdir, f"{instance_id}/{rand8:08d}")
+        os.makedirs(img_subdir, exist_ok=True)
         filename = f"walk_{current_walk['walk_id']:04d}_step_{step:04d}.jpg"
-        img_path = os.path.join(outdir, filename)
+        img_path = os.path.join(img_subdir, filename)
         img.save(img_path, format="JPEG")
-        add_image_record(current_walk["walk_id"], step, filename)
+        relpath = f"{instance_id}/{rand8:08d}/{filename}"
+        add_image_record(current_walk["walk_id"], step, relpath)
 
     current_walk["current_step"] += 1
 
@@ -239,18 +252,24 @@ def gallery_page():
     images_cursor.execute("SELECT id, walk_id, filename FROM generated_images")
 
     images_by_walk = {}
-    for img_id, walk_id, filename in images_cursor.fetchall():
+    for img_id, walk_id, relpath in images_cursor.fetchall():
         if walk_id not in images_by_walk:
             images_by_walk[walk_id] = []
-        images_by_walk[walk_id].append({'id': img_id, 'filename': filename})
+        inst, rand8, fname = relpath.split('/', 2)
+        images_by_walk[walk_id].append({
+            'id': img_id,
+            'instance_id': inst,
+            'rand8': rand8,
+            'filename': fname,
+        })
 
     conn.close()
     return render_template('gallery.html', walks=all_walks, images_by_walk=images_by_walk)
 
 
-@app.route('/generated_images/<path:filename>')
-def serve_generated_image(filename):
-    return send_from_directory(outdir, filename)
+@app.route('/generated_images/<instance_id>/<rand8>/<filename>')
+def serve_generated_image(instance_id, rand8, filename):
+    return send_from_directory(os.path.join(outdir, instance_id, rand8), filename)
 
 
 @app.route('/create_custom_walk', methods=['POST'])
