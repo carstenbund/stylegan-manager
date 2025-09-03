@@ -20,7 +20,6 @@ DEFAULT_NETWORK_PKL = (
 
 parser = argparse.ArgumentParser()
 parser.add_argument(
-    "--network",
     "--network-pkl",
     dest="network_pkl",
     type=str,
@@ -34,7 +33,7 @@ parser.add_argument(
     help="Directory to save generated images.",
 )
 parser.add_argument("--db-file", type=str, default="walks.db")
-parser.add_argument("--steps", type=int, default=60, help="Steps per interpolation leg.")
+parser.add_argument("--steps", type=int, default=120, help="Steps per interpolation leg.")
 args, _ = parser.parse_known_args()
 
 NETWORK_PKL = args.network_pkl
