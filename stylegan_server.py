@@ -1,11 +1,12 @@
 import os
 from io import BytesIO
+import base64
 import argparse
 import numpy as np
 import sqlite3
 import uuid
 import random
-from flask import Flask, send_file, jsonify, render_template, request, send_from_directory
+from flask import Flask, jsonify, render_template, request, send_from_directory
 
 from stylegan_gen import StyleGANGenerator
 from utils import LatentInterpolator
@@ -245,7 +246,16 @@ def get_next_image():
     buf = BytesIO()
     img.save(buf, format="PNG")
     buf.seek(0)
-    return send_file(buf, mimetype="image/png")
+    img_b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
+
+    return jsonify(
+        {
+            "image": img_b64,
+            "walk_id": current_walk["walk_id"],
+            "step": step,
+            "total_steps": len(current_walk["vectors"]),
+        }
+    )
 
 
 # --- Gallery and Custom Walk Creation Routes (Adapted for new schema) ---
