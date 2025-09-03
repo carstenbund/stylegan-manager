@@ -1,4 +1,4 @@
-# stylegan-server
+# stylegan-manager
 
 Flask service that streams interpolated images from a pre‑trained
 [StyleGAN3](https://github.com/NVlabs/stylegan3) network.
