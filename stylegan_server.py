@@ -267,6 +267,41 @@ def gallery_page():
     return render_template('gallery.html', walks=all_walks, images_by_walk=images_by_walk)
 
 
+@app.route('/delete_walk/<int:walk_id>', methods=['DELETE'])
+def delete_walk(walk_id):
+    """Deletes a walk and all of its associated images from disk and database."""
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+
+    # Gather image paths before deleting records
+    c.execute("SELECT filename FROM generated_images WHERE walk_id = ?", (walk_id,))
+    image_paths = [row[0] for row in c.fetchall()]
+
+    # Remove database records
+    c.execute("DELETE FROM generated_images WHERE walk_id = ?", (walk_id,))
+    c.execute("DELETE FROM walks WHERE id = ?", (walk_id,))
+    conn.commit()
+    conn.close()
+
+    # Delete image files from disk
+    if outdir:
+        for relpath in image_paths:
+            filepath = os.path.join(outdir, relpath)
+            try:
+                os.remove(filepath)
+                # Attempt to clean up empty directories
+                dirpath = os.path.dirname(filepath)
+                while dirpath.startswith(outdir) and dirpath != outdir:
+                    if not os.listdir(dirpath):
+                        os.rmdir(dirpath)
+                        dirpath = os.path.dirname(dirpath)
+                    else:
+                        break
+            except FileNotFoundError:
+                pass
+
+    return jsonify({"status": "success", "walk_id": walk_id})
+
 @app.route('/generated_images/<instance_id>/<rand8>/<filename>')
 def serve_generated_image(instance_id, rand8, filename):
     return send_from_directory(os.path.join(outdir, instance_id, rand8), filename)
