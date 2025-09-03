@@ -78,9 +78,15 @@ def init_db():
             num_steps INTEGER NOT NULL,
             vectors_blob BLOB NOT NULL,
             model_pkl TEXT NOT NULL,
+            step_rate INTEGER NOT NULL DEFAULT 60,
             timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
         )
     """)
+    # Ensure the step_rate column exists for older databases
+    c.execute("PRAGMA table_info(walks)")
+    existing_cols = [row[1] for row in c.fetchall()]
+    if "step_rate" not in existing_cols:
+        c.execute("ALTER TABLE walks ADD COLUMN step_rate INTEGER NOT NULL DEFAULT 60")
     # Create the generated_images table with a foreign key
     c.execute("""
         CREATE TABLE IF NOT EXISTS generated_images (
@@ -95,15 +101,15 @@ def init_db():
     conn.commit()
     conn.close()
 
-def create_walk_record(name, type, vectors, model_pkl):
+def create_walk_record(name, type, vectors, model_pkl, step_rate):
     """Saves a new walk definition to the DB and returns its ID."""
     vectors_blob = vectors.astype(np.float32).tobytes()
     num_steps = len(vectors)
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     c.execute(
-        "INSERT INTO walks (name, type, num_steps, vectors_blob, model_pkl) VALUES (?, ?, ?, ?, ?)",
-        (name, type, num_steps, vectors_blob, model_pkl)
+        "INSERT INTO walks (name, type, num_steps, vectors_blob, model_pkl, step_rate) VALUES (?, ?, ?, ?, ?, ?)",
+        (name, type, num_steps, vectors_blob, model_pkl, step_rate)
     )
     new_walk_id = c.lastrowid
     conn.commit()
@@ -179,11 +185,17 @@ def start_random_walk():
     else:
         segments = int(request.args.get("segments", 1))
 
-    interpolator = LatentInterpolator(base_generator.z_dim, n_steps=num_steps)
+    step_rate = num_steps
+    if request.is_json and "steps" in request.json:
+        step_rate = int(request.json["steps"])
+    else:
+        step_rate = int(request.args.get("steps", num_steps))
+
+    interpolator = LatentInterpolator(base_generator.z_dim, n_steps=step_rate)
     vectors = interpolator.random_walk(num_segments=segments)
 
     walk_name = f"random_{uuid.uuid4().hex[:8]}"
-    walk_id = create_walk_record(walk_name, 'random', vectors, NETWORK_PKL)
+    walk_id = create_walk_record(walk_name, 'random', vectors, NETWORK_PKL, step_rate)
 
     # Load this new walk as the current one
     current_walk["walk_id"] = walk_id
@@ -244,7 +256,7 @@ def gallery_page():
     conn = sqlite3.connect(DB_FILE)
     # Fetch all walks first
     walks_cursor = conn.cursor()
-    walks_cursor.execute("SELECT id, name, type, num_steps FROM walks ORDER BY id DESC")
+    walks_cursor.execute("SELECT id, name, type, num_steps, step_rate FROM walks ORDER BY id DESC")
     all_walks = walks_cursor.fetchall()
 
     # Fetch all rendered images and group them by walk_id
@@ -334,7 +346,7 @@ def create_custom_walk():
         vectors = np.array(full_path, dtype=np.float32)
 
         # Save the new curated walk to the database
-        walk_id = create_walk_record(walk_name, 'curated', vectors, NETWORK_PKL)
+        walk_id = create_walk_record(walk_name, 'curated', vectors, NETWORK_PKL, steps_per_leg)
 
         # Automatically load it
         current_walk["walk_id"] = walk_id

@@ -38,13 +38,15 @@
     <p>Select images in the order you want to create a new walk. <a href="/">Back to Generator</a></p>
 
     <div class="controls">
+        <label for="stepsInput">Steps per leg:</label>
+        <input type="number" id="stepsInput" value="60" min="2" style="width: 80px;">
         <button id="createWalkBtn">Create Custom Walk From Selection</button>
         <p id="status"></p>
     </div>
 
     {% for walk in walks %}
     <div class="walk">
-        <h2>Walk {{ walk[0] }}: {{ walk[1] }} ({{ walk[2] }}) <button class="delete-walk" data-walk-id="{{ walk[0] }}">Delete</button></h2>
+        <h2>Walk {{ walk[0] }}: {{ walk[1] }} ({{ walk[2] }}, step rate {{ walk[4] }}) <button class="delete-walk" data-walk-id="{{ walk[0] }}">Delete</button></h2>
         <div class="gallery">
             {% for image in images_by_walk.get(walk[0], []) %}
             <label class="img-container">
@@ -61,6 +63,7 @@
         document.addEventListener('DOMContentLoaded', () => {
             const createWalkBtn = document.getElementById('createWalkBtn');
             const statusEl = document.getElementById('status');
+            const stepsInput = document.getElementById('stepsInput');
             let selectedIds = [];
 
             document.querySelectorAll('.gallery').forEach(gallery => {
@@ -99,10 +102,11 @@
 
                 statusEl.textContent = 'Creating custom walk...';
 
+                const steps = parseInt(stepsInput.value, 10) || 60;
                 fetch('/create_custom_walk', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ ids: selectedIds, steps: 60 })
+                    body: JSON.stringify({ ids: selectedIds, steps: steps })
                 })
                 .then(response => response.json())
                 .then(data => {
