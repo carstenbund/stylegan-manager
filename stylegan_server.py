@@ -468,6 +468,68 @@ def serve_generated_image(walk_id, filename):
 def serve_generated_video(walk_id, filename):
     return send_from_directory(os.path.join(outdir, str(walk_id)), filename)
 
+@app.route('/recreate_walk/<int:walk_id>', methods=['POST'])
+def recreate_walk(walk_id):
+    """Recreates an existing walk with new step rate and loop options."""
+    data = request.get_json() or {}
+    steps_per_leg = int(data.get('steps', num_steps))
+    loop = bool(data.get('loop'))
+
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute(
+        "SELECT vectors_blob, num_steps, type, step_rate FROM walks WHERE id = ?",
+        (walk_id,),
+    )
+    row = c.fetchone()
+    conn.close()
+    if not row:
+        return jsonify({"status": "error", "message": "Walk not found"}), 404
+
+    vectors_blob, num_steps_existing, walk_type, step_rate_existing = row
+    vectors = np.frombuffer(vectors_blob, dtype=np.float32).reshape(
+        num_steps_existing, -1
+    )
+
+    segment_len = max(step_rate_existing - 1, 1)
+    num_segments = (num_steps_existing - 1) // segment_len
+    keyframe_indices = [i * segment_len for i in range(num_segments)]
+    keyframe_indices.append(num_steps_existing - 1)
+    keyframe_vectors = [vectors[idx] for idx in keyframe_indices]
+
+    full_path = []
+    for i in range(len(keyframe_vectors) - 1):
+        z_start, z_end = keyframe_vectors[i], keyframe_vectors[i + 1]
+        ratios = np.linspace(0, 1, num=steps_per_leg, dtype=np.float32)
+        segment = np.array(
+            [(1.0 - r) * z_start + r * z_end for r in ratios], dtype=np.float32
+        )
+        if i > 0:
+            segment = segment[1:]
+        full_path.extend(segment)
+
+    if loop and len(keyframe_vectors) > 1:
+        z_start, z_end = keyframe_vectors[-1], keyframe_vectors[0]
+        ratios = np.linspace(0, 1, num=steps_per_leg, dtype=np.float32)
+        segment = np.array(
+            [(1.0 - r) * z_start + r * z_end for r in ratios], dtype=np.float32
+        )
+        full_path.extend(segment[1:])
+
+    if not full_path:
+        return jsonify({"status": "error", "message": "Could not recreate walk"}), 500
+
+    vectors_new = np.array(full_path, dtype=np.float32)
+    walk_name = f"recreated_{walk_id}_{uuid.uuid4().hex[:8]}"
+    new_walk_id = create_walk_record(
+        walk_name, walk_type, vectors_new, NETWORK_PKL, steps_per_leg
+    )
+
+    render_queue.put(new_walk_id)
+    with queue_lock:
+        pending_walk_ids.append(new_walk_id)
+
+    return jsonify({"status": "success", "walk_id": new_walk_id, "queued": True})
 
 @app.route('/create_custom_walk', methods=['POST'])
 def create_custom_walk():

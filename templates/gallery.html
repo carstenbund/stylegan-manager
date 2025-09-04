@@ -68,6 +68,7 @@
                 {% endif %}
                 {% if videos_by_walk.get(walk[0]) %}
                 <button type="button" class="play-video" data-walk-id="{{ walk[0] }}" onclick="event.stopPropagation();">Play Video</button>
+                <button type="button" class="recreate-walk" data-walk-id="{{ walk[0] }}" onclick="event.stopPropagation();">Recreate</button>
                 {% endif %}
             </h2>
             <div class="thumbs">
@@ -236,6 +237,37 @@
                     .catch(err => {
                         console.error('Error:', err);
                         alert(`Failed to queue walk ${walkId}.`);
+                    });
+                });
+            });
+
+            document.querySelectorAll('.recreate-walk').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const walkId = btn.getAttribute('data-walk-id');
+                    const steps = parseInt(stepsInput.value, 10) || 60;
+                    const loop = loopInput.checked;
+                    fetch(`/recreate_walk/${walkId}`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ steps: steps, loop: loop })
+                    })
+                    .then(response => {
+                        if (!response.ok) {
+                            throw new Error(`Server responded with ${response.status}`);
+                        }
+                        return response.json();
+                    })
+                    .then(data => {
+                        if (data.status === 'success') {
+                            alert(`Walk ${walkId} recreated as ${data.walk_id} and queued for rendering.`);
+                            fetchQueueStatus();
+                        } else {
+                            throw new Error(data.message || 'Failed to recreate walk');
+                        }
+                    })
+                    .catch(err => {
+                        console.error('Error:', err);
+                        alert(`Error: ${err.message}`);
                     });
                 });
             });
