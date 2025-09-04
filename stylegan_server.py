@@ -149,7 +149,9 @@ def get_walk_vectors(walk_id):
     result = c.fetchone()
     conn.close()
     if result:
-        return np.frombuffer(result[0], dtype=np.float32).reshape(-1, base_generator.z_dim)
+        # np.frombuffer produces a read-only view; copy to ensure writeable before reshape
+        vectors = np.frombuffer(result[0], dtype=np.float32).copy()
+        return vectors.reshape(-1, base_generator.z_dim)
     return None
 
 def get_vector_by_image_id(image_id):
@@ -170,7 +172,9 @@ def get_vector_by_image_id(image_id):
     conn.close()
     if blob_result:
         vectors_blob, num_steps = blob_result
-        all_vectors = np.frombuffer(vectors_blob, dtype=np.float32).reshape(num_steps, -1)
+        # Copy after frombuffer to obtain a writeable array before reshaping
+        all_vectors = np.frombuffer(vectors_blob, dtype=np.float32).copy()
+        all_vectors = all_vectors.reshape(num_steps, -1)
         # Return the specific vector at the correct index
         return all_vectors[step_index]
     return None
