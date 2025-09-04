@@ -8,6 +8,7 @@ import uuid
 import queue
 import threading
 import subprocess
+from collections import deque
 from flask import Flask, jsonify, render_template, request, send_from_directory
 
 from stylegan_gen import StyleGANGenerator
@@ -62,6 +63,13 @@ current_walk = {
 
 # Queue for background rendering tasks
 render_queue = queue.Queue()
+
+# Deque and locks to track pending and current rendering tasks
+pending_walk_ids = deque()
+queue_lock = threading.Lock()
+rendering_walk_id = None
+abort_event = threading.Event()
+cancelled_walks = set()
 
 # ----------------------------------------------------------------------------
 # Database Helper Functions
@@ -171,8 +179,20 @@ def get_vector_by_image_id(image_id):
 # ----------------------------------------------------------------------------
 
 def render_worker():
+    global rendering_walk_id
     while True:
         walk_id = render_queue.get()
+        with queue_lock:
+            if walk_id in cancelled_walks:
+                cancelled_walks.remove(walk_id)
+                render_queue.task_done()
+                continue
+            try:
+                pending_walk_ids.remove(walk_id)
+            except ValueError:
+                pass
+            rendering_walk_id = walk_id
+            abort_event.clear()
         try:
             vectors = get_walk_vectors(walk_id)
             if vectors is None:
@@ -183,6 +203,8 @@ def render_worker():
             existing = {row[0] for row in c.fetchall()}
             conn.close()
             for step, z in enumerate(vectors):
+                if abort_event.is_set():
+                    break
                 if step in existing:
                     continue
                 img = base_generator.generate_image(z=z, truncation_psi=0.7)
@@ -195,7 +217,7 @@ def render_worker():
                     relpath = f"{walk_id}/{filename}"
                     add_image_record(walk_id, step, relpath)
             # After rendering all steps, attempt to create a video using ffmpeg
-            if outdir:
+            if outdir and not abort_event.is_set():
                 img_subdir = os.path.join(outdir, str(walk_id))
                 video_path = os.path.join(img_subdir, "walk.mp4")
                 if os.path.exists(img_subdir) and not os.path.exists(video_path):
@@ -211,6 +233,9 @@ def render_worker():
                     except Exception as e:
                         print(f"ffmpeg failed for walk {walk_id}: {e}")
         finally:
+            with queue_lock:
+                rendering_walk_id = None
+                abort_event.clear()
             render_queue.task_done()
 
 
@@ -273,7 +298,33 @@ def load_walk(walk_id):
 def enqueue_walk(walk_id):
     """Adds a walk ID to the background rendering queue."""
     render_queue.put(walk_id)
+    with queue_lock:
+        pending_walk_ids.append(walk_id)
     return jsonify({"status": "enqueued", "walk_id": walk_id})
+
+
+@app.route("/queue_status", methods=["GET"])
+def queue_status():
+    """Returns the current rendering walk and pending queue."""
+    with queue_lock:
+        pending = list(pending_walk_ids)
+        current = rendering_walk_id
+    return jsonify({"rendering": current, "pending": pending})
+
+
+@app.route("/queue_item/<int:walk_id>", methods=["DELETE"])
+def delete_queue_item(walk_id):
+    """Removes a walk from the queue or aborts it if currently rendering."""
+    with queue_lock:
+        if rendering_walk_id == walk_id:
+            abort_event.set()
+            return jsonify({"status": "aborting", "walk_id": walk_id})
+        try:
+            pending_walk_ids.remove(walk_id)
+            cancelled_walks.add(walk_id)
+            return jsonify({"status": "removed", "walk_id": walk_id})
+        except ValueError:
+            return jsonify({"status": "error", "message": "Walk not found"}), 404
 
 
 @app.route("/next_image", methods=["GET"])
