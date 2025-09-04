@@ -47,6 +47,7 @@
     <div class="controls">
         <label for="stepsInput">Steps per leg:</label>
         <input type="number" id="stepsInput" value="60" min="2" style="width: 80px;">
+        <label><input type="checkbox" id="loopInput"> Loop walk</label>
         <button id="createWalkBtn">Create Custom Walk From Selection</button>
         <p id="status"></p>
     </div>
@@ -99,6 +100,7 @@
             const createWalkBtn = document.getElementById('createWalkBtn');
             const statusEl = document.getElementById('status');
             const stepsInput = document.getElementById('stepsInput');
+            const loopInput = document.getElementById('loopInput');
             const queueList = document.getElementById('queueList');
             let selectedIds = [];
 
@@ -176,7 +178,7 @@
                 fetch('/create_custom_walk', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ ids: selectedIds, steps: steps })
+                    body: JSON.stringify({ ids: selectedIds, steps: steps, loop: loopInput.checked })
                 })
                 .then(response => response.json())
                 .then(data => {
