@@ -515,7 +515,14 @@ def create_custom_walk():
         current_walk["vectors"] = vectors
         current_walk["current_step"] = 0
 
-        return jsonify({"status": "success", "walk_id": walk_id, "name": walk_name})
+        # Queue the walk for background rendering/video generation
+        render_queue.put(walk_id)
+        with queue_lock:
+            pending_walk_ids.append(walk_id)
+            queue_length = render_queue.qsize()
+        print(f"Enqueued walk {walk_id}. Queue length: {queue_length}")
+
+        return jsonify({"status": "success", "walk_id": walk_id, "name": walk_name, "queued": True})
 
     return jsonify({"status": "error", "message": "Could not create path"}), 500
 
