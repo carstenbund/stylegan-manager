@@ -50,6 +50,11 @@
         <p id="status"></p>
     </div>
 
+    <div id="queueStatus" class="controls">
+        <h2>Render Queue</h2>
+        <ul id="queueList"></ul>
+    </div>
+
     {% for walk in walks %}
     {% set images = images_by_walk.get(walk[0], []) %}
     <details class="walk">
@@ -93,7 +98,42 @@
             const createWalkBtn = document.getElementById('createWalkBtn');
             const statusEl = document.getElementById('status');
             const stepsInput = document.getElementById('stepsInput');
+            const queueList = document.getElementById('queueList');
             let selectedIds = [];
+
+            function fetchQueueStatus() {
+                fetch('/queue_status')
+                .then(res => res.json())
+                .then(data => {
+                    queueList.innerHTML = '';
+                    if (data.rendering) {
+                        const li = document.createElement('li');
+                        li.textContent = `Rendering walk ${data.rendering}`;
+                        const btn = document.createElement('button');
+                        btn.textContent = 'Cancel';
+                        btn.addEventListener('click', () => cancelWalk(data.rendering));
+                        li.appendChild(btn);
+                        queueList.appendChild(li);
+                    }
+                    data.pending.forEach(id => {
+                        const li = document.createElement('li');
+                        li.textContent = `Queued walk ${id}`;
+                        const btn = document.createElement('button');
+                        btn.textContent = 'Cancel';
+                        btn.addEventListener('click', () => cancelWalk(id));
+                        li.appendChild(btn);
+                        queueList.appendChild(li);
+                    });
+                });
+            }
+
+            function cancelWalk(id) {
+                fetch(`/queue_item/${id}`, { method: 'DELETE' })
+                .then(() => fetchQueueStatus());
+            }
+
+            fetchQueueStatus();
+            setInterval(fetchQueueStatus, 5000);
 
             document.querySelectorAll('.gallery').forEach(gallery => {
                 gallery.addEventListener('change', (event) => {
