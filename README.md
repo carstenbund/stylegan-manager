@@ -37,6 +37,20 @@ Visit `http://localhost:5000/gallery` to browse saved walks and images. The
 gallery interface also allows creating curated walks by interpolating between
 selected keyframes.
 
+## Library usage
+
+The project now exposes a lightweight Python package, ``stylegan_manager``,
+that provides modular building blocks for exploring StyleGAN models. The
+package includes:
+
+* ``Walk`` – abstract base class for latent walks.
+* ``RandomWalk`` – quick exploratory walk that generates random frames.
+* ``CustomWalk`` – interpolation-based walk with optional video rendering.
+* ``VideoManager`` – tracks curated walks and their render status.
+
+These components can be imported directly from ``stylegan_manager`` for use in
+other applications.
+
 ## Output Directory Structure
 
 Generated images are stored in a layout where each walk has its own folder:
