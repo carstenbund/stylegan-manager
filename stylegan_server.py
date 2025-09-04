@@ -194,6 +194,7 @@ def render_worker():
                 pass
             rendering_walk_id = walk_id
             abort_event.clear()
+        print(f"Starting rendering walk {walk_id}. Queue length: {render_queue.qsize()}")
         try:
             vectors = get_walk_vectors(walk_id)
             if vectors is None:
@@ -238,6 +239,7 @@ def render_worker():
                 rendering_walk_id = None
                 abort_event.clear()
             render_queue.task_done()
+            print(f"Finished rendering walk {walk_id}. Queue length: {render_queue.qsize()}")
 
 
 @app.before_first_request
@@ -306,6 +308,8 @@ def enqueue_walk(walk_id):
     render_queue.put(walk_id)
     with queue_lock:
         pending_walk_ids.append(walk_id)
+        queue_length = render_queue.qsize()
+    print(f"Enqueued walk {walk_id}. Queue length: {queue_length}")
     return jsonify({"status": "enqueued", "walk_id": walk_id})
 
 
