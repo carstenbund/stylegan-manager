@@ -195,14 +195,21 @@ def render_worker():
             rendering_walk_id = walk_id
             abort_event.clear()
         try:
-            vectors = get_walk_vectors(walk_id)
-            if vectors is None:
+            try:
+                vectors = get_walk_vectors(walk_id)
+                if vectors is None:
+                    continue
+                conn = sqlite3.connect(DB_FILE)
+                c = conn.cursor()
+                c.execute(
+                    "SELECT step_index FROM generated_images WHERE walk_id = ?",
+                    (walk_id,),
+                )
+                existing = {row[0] for row in c.fetchall()}
+                conn.close()
+            except Exception as e:
+                print(f"Database error for walk {walk_id}: {e}")
                 continue
-            conn = sqlite3.connect(DB_FILE)
-            c = conn.cursor()
-            c.execute("SELECT step_index FROM generated_images WHERE walk_id = ?", (walk_id,))
-            existing = {row[0] for row in c.fetchall()}
-            conn.close()
             for step, z in enumerate(vectors):
                 if abort_event.is_set():
                     break
@@ -216,7 +223,12 @@ def render_worker():
                     img_path = os.path.join(img_subdir, filename)
                     img.save(img_path, format="JPEG")
                     relpath = f"{walk_id}/{filename}"
-                    add_image_record(walk_id, step, relpath)
+                    try:
+                        add_image_record(walk_id, step, relpath)
+                    except Exception as e:
+                        print(
+                            f"Database error adding image record for walk {walk_id}, step {step}: {e}"
+                        )
             # After rendering all steps, attempt to create a video using ffmpeg
             if outdir and not abort_event.is_set():
                 img_subdir = os.path.join(outdir, str(walk_id))
