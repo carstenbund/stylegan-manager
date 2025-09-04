@@ -35,6 +35,8 @@
         summary::-webkit-details-marker { display: none; }
         .thumbs { display: flex; gap: 10px; justify-content: center; margin-top: 10px; }
         .thumbs img { width: 150px; height: auto; border-radius: 8px; }
+        #videoOverlay { position: fixed; top:0; left:0; width:100%; height:100%; background: rgba(0,0,0,0.8); display:none; align-items:center; justify-content:center; }
+        #videoOverlay video { max-width:90%; max-height:90%; }
     </style>
 </head>
 <body>
@@ -52,7 +54,15 @@
     {% set images = images_by_walk.get(walk[0], []) %}
     <details class="walk">
         <summary>
-            <h2>Walk {{ walk[0] }}: {{ walk[1] }} ({{ walk[2] }}, step rate {{ walk[4] }}) <button class="delete-walk" data-walk-id="{{ walk[0] }}" onclick="event.stopPropagation();">Delete</button></h2>
+            <h2>Walk {{ walk[0] }}: {{ walk[1] }} ({{ walk[2] }}, step rate {{ walk[4] }})
+                <button class="delete-walk" data-walk-id="{{ walk[0] }}" onclick="event.stopPropagation();">Delete</button>
+                {% if images|length < walk[3] %}
+                <button class="enqueue-walk" data-walk-id="{{ walk[0] }}" onclick="event.stopPropagation();">Render</button>
+                {% endif %}
+                {% if videos_by_walk.get(walk[0]) %}
+                <button class="play-video" data-walk-id="{{ walk[0] }}" onclick="event.stopPropagation();">Play Video</button>
+                {% endif %}
+            </h2>
             <div class="thumbs">
                 {% if images %}
                 <img src="{{ url_for('serve_generated_image', walk_id=walk[0], filename=images[0].filename) }}" alt="start image">
@@ -73,6 +83,10 @@
         </div>
     </details>
     {% endfor %}
+
+    <div id="videoOverlay">
+        <video id="walkVideo" controls></video>
+    </div>
 
     <script>
         document.addEventListener('DOMContentLoaded', () => {
@@ -160,6 +174,37 @@
                         alert(`Error: ${error.message}`);
                     });
                 });
+            });
+
+            document.querySelectorAll('.enqueue-walk').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const walkId = btn.getAttribute('data-walk-id');
+                    fetch(`/enqueue_walk/${walkId}`, { method: 'POST' })
+                    .then(response => response.json())
+                    .then(() => alert(`Walk ${walkId} queued for rendering.`))
+                    .catch(err => console.error('Error:', err));
+                });
+            });
+
+            document.querySelectorAll('.play-video').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const walkId = btn.getAttribute('data-walk-id');
+                    const overlay = document.getElementById('videoOverlay');
+                    const video = document.getElementById('walkVideo');
+                    video.src = `/generated_videos/${walkId}/walk.mp4`;
+                    overlay.style.display = 'flex';
+                    video.play();
+                });
+            });
+
+            document.getElementById('videoOverlay').addEventListener('click', (e) => {
+                if (e.target.id === 'videoOverlay') {
+                    const overlay = document.getElementById('videoOverlay');
+                    const video = document.getElementById('walkVideo');
+                    video.pause();
+                    video.removeAttribute('src');
+                    overlay.style.display = 'none';
+                }
             });
         });
     </script>
