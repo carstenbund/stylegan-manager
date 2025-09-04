@@ -70,6 +70,7 @@ queue_lock = threading.Lock()
 rendering_walk_id = None
 abort_event = threading.Event()
 cancelled_walks = set()
+worker_thread = None
 
 # ----------------------------------------------------------------------------
 # Database Helper Functions
@@ -239,8 +240,13 @@ def render_worker():
             render_queue.task_done()
 
 
-worker_thread = threading.Thread(target=render_worker, daemon=True)
-worker_thread.start()
+@app.before_first_request
+def start_worker():
+    init_db()
+    global worker_thread
+    if worker_thread is None:
+        worker_thread = threading.Thread(target=render_worker, daemon=True)
+        worker_thread.start()
 
 # ----------------------------------------------------------------------------
 # Flask Routes
@@ -487,5 +493,4 @@ def create_custom_walk():
 
 
 if __name__ == "__main__":
-    init_db()
     app.run(host="0.0.0.0", port=5000)
