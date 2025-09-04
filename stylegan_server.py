@@ -194,6 +194,22 @@ def render_worker():
                     img.save(img_path, format="JPEG")
                     relpath = f"{walk_id}/{filename}"
                     add_image_record(walk_id, step, relpath)
+            # After rendering all steps, attempt to create a video using ffmpeg
+            if outdir:
+                img_subdir = os.path.join(outdir, str(walk_id))
+                video_path = os.path.join(img_subdir, "walk.mp4")
+                if os.path.exists(img_subdir) and not os.path.exists(video_path):
+                    cmd = [
+                        "ffmpeg", "-y",
+                        "-framerate", "30",
+                        "-i", os.path.join(img_subdir, "step_%04d.jpg"),
+                        "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                        video_path,
+                    ]
+                    try:
+                        subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                    except Exception as e:
+                        print(f"ffmpeg failed for walk {walk_id}: {e}")
         finally:
             render_queue.task_done()
 
@@ -325,7 +341,14 @@ def gallery_page():
         })
 
     conn.close()
-    return render_template('gallery.html', walks=all_walks, images_by_walk=images_by_walk)
+
+    videos_by_walk = {}
+    if outdir:
+        for walk in all_walks:
+            video_path = os.path.join(outdir, str(walk[0]), "walk.mp4")
+            videos_by_walk[walk[0]] = os.path.exists(video_path)
+
+    return render_template('gallery.html', walks=all_walks, images_by_walk=images_by_walk, videos_by_walk=videos_by_walk)
 
 
 @app.route('/delete_walk/<int:walk_id>', methods=['DELETE'])
@@ -365,6 +388,11 @@ def delete_walk(walk_id):
 
 @app.route('/generated_images/<int:walk_id>/<filename>')
 def serve_generated_image(walk_id, filename):
+    return send_from_directory(os.path.join(outdir, str(walk_id)), filename)
+
+
+@app.route('/generated_videos/<int:walk_id>/<filename>')
+def serve_generated_video(walk_id, filename):
     return send_from_directory(os.path.join(outdir, str(walk_id)), filename)
 
 
