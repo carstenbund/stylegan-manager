@@ -475,6 +475,7 @@ def create_custom_walk():
     data = request.get_json()
     image_ids = data.get('ids', [])
     steps_per_leg = data.get('steps', num_steps)
+    loop = bool(data.get('loop'))
 
     if len(image_ids) < 2:
         return jsonify({"status": "error", "message": "Select at least two images"}), 400
@@ -485,10 +486,21 @@ def create_custom_walk():
 
     # Interpolate between keyframes
     full_path = []
-    for i in range(len(keyframe_vectors) - 1):
-        z_start, z_end = keyframe_vectors[i], keyframe_vectors[i+1]
+    num_keys = len(keyframe_vectors)
+    for i in range(num_keys - 1):
+        z_start, z_end = keyframe_vectors[i], keyframe_vectors[i + 1]
         ratios = np.linspace(0, 1, num=steps_per_leg, dtype=np.float32)
-        segment = np.array([(1.0 - r) * z_start + r * z_end for r in ratios], dtype=np.float32)
+        segment = np.array(
+            [(1.0 - r) * z_start + r * z_end for r in ratios], dtype=np.float32
+        )
+        full_path.extend(segment)
+
+    if loop and num_keys > 1:
+        z_start, z_end = keyframe_vectors[-1], keyframe_vectors[0]
+        ratios = np.linspace(0, 1, num=steps_per_leg, dtype=np.float32)
+        segment = np.array(
+            [(1.0 - r) * z_start + r * z_end for r in ratios], dtype=np.float32
+        )
         full_path.extend(segment)
 
     if full_path:
