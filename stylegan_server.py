@@ -382,18 +382,25 @@ def get_next_image():
             "total_steps": len(current_walk["vectors"]),
         }
     )
-
-
 # --- Gallery and Custom Walk Creation Routes (Adapted for new schema) ---
+
+
+def parse_gallery_filters(args):
+    """Extract active gallery filters from request arguments."""
+    filters = {}
+    if args.get("liked") == "1":
+        filters["liked"] = True
+    return filters
+
 
 @app.route('/gallery')
 def gallery_page():
     """Renders a gallery of all defined walks and their rendered images."""
-    liked_only = request.args.get('liked') == '1'
+    filters = parse_gallery_filters(request.args)
     all_walks = fetch_all_walks(DB_FILE)
 
     images_by_walk = {}
-    for img_id, walk_id, relpath, liked in fetch_images(DB_FILE, liked_only=liked_only):
+    for img_id, walk_id, relpath, liked in fetch_images(DB_FILE, liked_only=filters.get('liked', False)):
         if walk_id not in images_by_walk:
             images_by_walk[walk_id] = []
         fname = relpath.split('/', 1)[1] if '/' in relpath else relpath
@@ -409,7 +416,13 @@ def gallery_page():
             video_path = os.path.join(outdir, str(walk[0]), "walk.mp4")
             videos_by_walk[walk[0]] = os.path.exists(video_path)
 
-    return render_template('gallery.html', walks=all_walks, images_by_walk=images_by_walk, videos_by_walk=videos_by_walk, liked_only=liked_only)
+    return render_template(
+        'gallery.html',
+        walks=all_walks,
+        images_by_walk=images_by_walk,
+        videos_by_walk=videos_by_walk,
+        filters=filters,
+    )
 
 
 @app.route('/image/<int:image_id>/like', methods=['POST'])
