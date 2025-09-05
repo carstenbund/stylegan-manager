@@ -427,7 +427,7 @@ def delete_archived_walk(walk_id):
 
 @app.route('/restore_walk/<int:archived_id>', methods=['POST'])
 def restore_walk(archived_id):
-    """Restores a walk from the archive to the main database."""
+    """Restore a walk to the main database without removing it from the archive."""
     queue_flag = request.args.get('queue') in ('1', 'true', 'yes')
 
     restored_id = db_restore_walk(ARCHIVE_DB_FILE, DB_FILE, archived_id)
