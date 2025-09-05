@@ -203,20 +203,33 @@ def start_random_walk():
         else:
             segments = int(request.args.get("segments", 1))
 
-    step_rate = num_steps
-    if request.is_json and "steps" in request.json:
-        step_rate = int(request.json["steps"])
+    n_vectors = num_steps
+    if request.is_json:
+        if "steps" in request.json:
+            n_vectors = int(request.json["steps"])
+        elif "n_vectors" in request.json:
+            n_vectors = int(request.json["n_vectors"])
     else:
-        step_rate = int(request.args.get("steps", num_steps))
+        steps_arg = request.args.get("steps") or request.args.get("n_vectors")
+        if steps_arg is not None:
+            n_vectors = int(steps_arg)
 
-    total_steps = segments * step_rate
+    extent = 2.0
+    if request.is_json and "extent" in request.json:
+        extent = float(request.json["extent"])
+    else:
+        extent_arg = request.args.get("extent")
+        if extent_arg is not None:
+            extent = float(extent_arg)
+
+    total_steps = segments * n_vectors
     tracker = LatentTracker(base_generator)
-    walk = RandomWalk(tracker, steps=total_steps)
-    walk.generate()
+    walk = RandomWalk(tracker)
+    walk.generate(n_vectors=total_steps, extent=extent)
     vectors = np.concatenate(tracker.latents, axis=0).astype(np.float32, copy=False)
 
     walk_name = f"random_{uuid.uuid4().hex[:8]}"
-    walk_id = create_walk(DB_FILE, walk_name, 'random', vectors, NETWORK_PKL, step_rate)
+    walk_id = create_walk(DB_FILE, walk_name, 'random', vectors, NETWORK_PKL, n_vectors)
 
     # Load this new walk as the current one
     current_walk["walk_id"] = walk_id
