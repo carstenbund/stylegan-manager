@@ -183,6 +183,10 @@ def fetch_archived_walks(archive_file: str) -> List[Tuple]:
     return walks
 
 def restore_walk(archive_file: str, db_file: str, archived_id: int) -> Optional[int]:
+    """Copy a walk from the archive back to the main database.
+
+    The walk remains in the archive after restoration.
+    """
     arch_conn = sqlite3.connect(archive_file)
     arch_c = arch_conn.cursor()
     arch_c.execute(
@@ -190,21 +194,30 @@ def restore_walk(archive_file: str, db_file: str, archived_id: int) -> Optional[
         (archived_id,),
     )
     row = arch_c.fetchone()
+    arch_conn.close()
     if not row:
-        arch_conn.close()
         return None
+
     conn = sqlite3.connect(db_file)
     c = conn.cursor()
-    c.execute(
-        "INSERT INTO walks (id, name, type, num_steps, vectors_blob, model_pkl, step_rate, timestamp) VALUES (?,?,?,?,?,?,?,?)",
-        row,
-    )
+    # Preserve original ID if it's unused; otherwise let SQLite assign a new one.
+    c.execute("SELECT 1 FROM walks WHERE id = ?", (row[0],))
+    exists = c.fetchone() is not None
+    if exists:
+        c.execute(
+            "INSERT INTO walks (name, type, num_steps, vectors_blob, model_pkl, step_rate, timestamp) VALUES (?,?,?,?,?,?,?)",
+            row[1:],
+        )
+        new_id = c.lastrowid
+    else:
+        c.execute(
+            "INSERT INTO walks (id, name, type, num_steps, vectors_blob, model_pkl, step_rate, timestamp) VALUES (?,?,?,?,?,?,?,?)",
+            row,
+        )
+        new_id = row[0]
     conn.commit()
     conn.close()
-    arch_c.execute("DELETE FROM walks WHERE id = ?", (archived_id,))
-    arch_conn.commit()
-    arch_conn.close()
-    return row[0]
+    return new_id
 
 
 def delete_archived_walk(archive_file: str, walk_id: int) -> None:
