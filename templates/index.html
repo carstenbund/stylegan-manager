@@ -14,6 +14,8 @@
     <h1>StyleGAN Walk</h1>
     <div>
         <button id="play">Play</button>
+        <label for="randSteps">Steps:</label>
+        <input type="number" id="randSteps" value="120" min="2" style="width: 80px;" />
         <button id="startRandom">Start Random Walk</button>
         <button id="stop">Stop</button>
         <a href="/gallery">Gallery</a>
@@ -49,7 +51,12 @@
         });
 
         document.getElementById('startRandom').addEventListener('click', async () => {
-            await fetch('/start_random_walk', { method: 'POST' });
+            const steps = parseInt(document.getElementById('randSteps').value, 10) || 120;
+            await fetch('/start_random_walk', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ steps })
+            });
             running = true;
             fetchLoop();
         });
