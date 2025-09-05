@@ -112,12 +112,12 @@
             let lastRendering = null;
 
             function fetchQueueStatus() {
-                fetch('/queue_status')
+                return fetch('/queue_status')
                 .then(res => res.json())
                 .then(data => {
                     if (lastRendering && data.rendering !== lastRendering) {
                         window.location.reload();
-                        return;
+                        return data;
                     }
                     lastRendering = data.rendering;
                     queueList.innerHTML = '';
@@ -130,6 +130,15 @@
                         li.appendChild(btn);
                         queueList.appendChild(li);
                     }
+                    (data.preparing || []).forEach(id => {
+                        const li = document.createElement('li');
+                        li.textContent = `Preparing walk ${id}`;
+                        const btn = document.createElement('button');
+                        btn.textContent = 'Cancel';
+                        btn.addEventListener('click', () => cancelWalk(id));
+                        li.appendChild(btn);
+                        queueList.appendChild(li);
+                    });
                     data.pending.forEach(id => {
                         const li = document.createElement('li');
                         li.textContent = `Queued walk ${id}`;
@@ -139,6 +148,7 @@
                         li.appendChild(btn);
                         queueList.appendChild(li);
                     });
+                    return data;
                 });
             }
 
@@ -267,11 +277,18 @@
                 btn.addEventListener('click', () => {
                     const walkId = btn.getAttribute('data-walk-id');
                     const steps = parseInt(stepsInput.value, 10) || 60;
-                    fetch(`/enqueue_walk/${walkId}`, {
+                    const request = fetch(`/enqueue_walk/${walkId}`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ steps })
-                    })
+                    });
+
+                    const placeholder = document.createElement('li');
+                    placeholder.textContent = 'Preparing...';
+                    queueList.appendChild(placeholder);
+                    fetchQueueStatus();
+
+                    request
                     .then(response => {
                         if (!response.ok) {
                             throw new Error(`Server responded with ${response.status}`);
@@ -281,7 +298,14 @@
                     .then(data => {
                         const newId = data.walk_id;
                         alert(`Walk ${newId} queued for rendering.`);
-                        fetchQueueStatus();
+                        const poll = setInterval(() => {
+                            fetchQueueStatus().then(status => {
+                                const preparing = status.preparing || [];
+                                if (!preparing.includes(newId)) {
+                                    clearInterval(poll);
+                                }
+                            });
+                        }, 1000);
                     })
                     .catch(err => {
                         console.error('Error:', err);
