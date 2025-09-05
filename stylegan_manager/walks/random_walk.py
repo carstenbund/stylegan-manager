@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+from typing import Optional
+
 import numpy as np
 from PIL import Image
 
 from .base import Walk
+from ..utils import sample_latents
 
 
 class RandomWalk(Walk):
@@ -13,11 +16,18 @@ class RandomWalk(Walk):
         super().__init__(model, **kwargs)
         self.steps = steps
 
-    def generate(self) -> None:
+    def generate(
+        self,
+        n_vectors: Optional[int] = None,
+        extent: float = 2.0,
+        seed: Optional[int] = None,
+    ) -> None:
         self.frames = []
         latent_dim = getattr(self.model, "latent_dim", 512)
-        for _ in range(self.steps):
-            z = np.random.randn(1, latent_dim)
+        count = n_vectors if n_vectors is not None else self.steps
+        latents = sample_latents(latent_dim, count, extent=extent, seed=seed)
+        for z in latents:
+            z = z[np.newaxis, :]
             if hasattr(self.model, "generate_image"):
                 img = self.model.generate_image(z)
             else:

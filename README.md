@@ -26,14 +26,20 @@ python stylegan_server.py
 Generate images by performing a latent walk:
 
 ```bash
-# define a random walk with 120 steps and 4 keyframes and load it
+# define a random walk with 120 steps in range [-1.5, 1.5] and load it
 curl -X POST -H "Content-Type: application/json" \
-     -d '{"steps":120,"keyframes":4}' \
+     -d '{"steps":120,"keyframes":4,"extent":1.5}' \
      http://localhost:5000/start_random_walk
 
 # fetch the next image in the walk (PNG binary response)
 curl -o frame.png http://localhost:5000/next_image
 ```
+
+Latent vectors are generated via the ``sample_latents`` utility, which draws
+bounded samples from a standard normal distribution and optionally mixes in a
+Sobol low-discrepancy sequence.  The ``/start_random_walk`` endpoint accepts
+``steps`` (or ``n_vectors``) to control how many vectors are generated and an
+``extent`` value that limits sampling to ``[-extent, extent]``.
 
 Visit `http://localhost:5000/gallery` to browse saved walks and images. The
 gallery interface also allows creating curated walks by interpolating between
