@@ -48,6 +48,7 @@
         <label for="stepsInput">Steps per leg:</label>
         <input type="number" id="stepsInput" value="60" min="2" style="width: 80px;">
         <label><input type="checkbox" id="loopInput"> Loop walk</label>
+        <label><input type="checkbox" id="queueInput" checked> Queue</label>
         <button id="createWalkBtn">Create Custom Walk From Selection</button>
         <p id="status"></p>
     </div>
@@ -101,6 +102,7 @@
             const statusEl = document.getElementById('status');
             const stepsInput = document.getElementById('stepsInput');
             const loopInput = document.getElementById('loopInput');
+            const queueInput = document.getElementById('queueInput');
             const queueList = document.getElementById('queueList');
             let selectedIds = [];
 
@@ -178,14 +180,19 @@
                 fetch('/create_custom_walk', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ ids: selectedIds, steps: steps, loop: loopInput.checked })
+                    body: JSON.stringify({ ids: selectedIds, steps: steps, loop: loopInput.checked, queue: queueInput.checked })
                 })
                 .then(response => response.json())
                 .then(data => {
-                    if (data.status === 'success') {
-                        statusEl.textContent = `Success! New walk with ID ${data.walk_id} created.`;
-                        alert('Custom walk created! You will now be redirected to the main page.');
-                        window.location.href = '/index?autoplay=true';
+                    if (data.status === 'success' || data.status === 'queued') {
+                        if (queueInput.checked) {
+                            statusEl.textContent = `Walk ${data.walk_id} queued for rendering.`;
+                            fetchQueueStatus();
+                        } else {
+                            statusEl.textContent = `Success! New walk with ID ${data.walk_id} created.`;
+                            alert('Custom walk created! You will now be redirected to the main page.');
+                            window.location.href = '/index?autoplay=true';
+                        }
                     } else {
                         throw new Error(data.message);
                     }
