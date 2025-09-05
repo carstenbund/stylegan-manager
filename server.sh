@@ -10,7 +10,7 @@ resolution=1024
 outdir=images/${network}/${resolution}/${series} \
 network_pkl=data/${network}/${resolution}/network-snapshot-${series}.pkl
 
-sudo docker run -d --rm --gpus all \
+sudo docker run --rm --gpus all \
           -v `pwd`:/scratch --workdir /scratch \
 	  -p 5001:5000 \
           -e NVIDIA_VISIBLE_DEVICES=all \
