@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Curated Walks</title>
+    <style>
+        body { font-family: Arial, sans-serif; }
+    </style>
+</head>
+<body>
+    <h1>Videos</h1>
+    <ul>
+    {% for name, meta in walks.items() %}
+        <li>{{ name }} - {{ meta['status'] }}</li>
+    {% endfor %}
+    </ul>
+</body>
+</html>
