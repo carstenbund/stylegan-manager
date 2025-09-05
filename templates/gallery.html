@@ -29,8 +29,10 @@
         }
         #createWalkBtn { padding: 10px 20px; font-size: 16px; cursor: pointer; border-radius: 5px; border: none; background-color: #28a745; color: white; }
         #createWalkBtn:hover { background-color: #218838; }
-        .delete-walk { padding: 5px 10px; margin-left: 10px; font-size: 14px; cursor: pointer; border-radius: 4px; border: none; background-color: #dc3545; color: white; }
-        .delete-walk:hover { background-color: #c82333; }
+        .archive-walk { padding: 5px 10px; margin-left: 10px; font-size: 14px; cursor: pointer; border-radius: 4px; border: none; background-color: #6c757d; color: white; }
+        .archive-walk:hover { background-color: #5a6268; }
+        .play-video, .download-video, .enqueue-walk { padding: 5px 10px; margin-left: 10px; font-size: 14px; cursor: pointer; border-radius: 4px; border: none; background-color: #28a745; color: white; }
+        .play-video:hover, .download-video:hover, .enqueue-walk:hover { background-color: #218838; }
         summary { cursor: pointer; list-style: none; }
         summary::-webkit-details-marker { display: none; }
         .thumbs { display: flex; gap: 10px; justify-content: center; margin-top: 10px; }
@@ -42,11 +44,13 @@
 </head>
 <body>
     <h1>Walk Gallery</h1>
-    <p>Select images in the order you want to create a new walk. <a href="/">Back to Generator</a></p>
+    <p>Select images in the order you want to create a new walk. <a href="/">Back to Generator</a> | <a href="/archive">Archived Walks</a></p>
 
     <div class="controls">
         <label for="stepsInput">Steps per leg:</label>
         <input type="number" id="stepsInput" value="60" min="2" style="width: 80px;">
+        <label><input type="checkbox" id="loopInput"> Loop walk</label>
+        <label><input type="checkbox" id="queueInput" checked> Queue</label>
         <button id="createWalkBtn">Create Custom Walk From Selection</button>
         <p id="status"></p>
     </div>
@@ -61,12 +65,11 @@
     <details class="walk">
         <summary>
             <h2>Walk {{ walk[0] }}: {{ walk[1] }} ({{ walk[2] }}, step rate {{ walk[4] }})
-                <button type="button" class="delete-walk" data-walk-id="{{ walk[0] }}" onclick="event.stopPropagation();">Delete</button>
-                {% if images|length < walk[3] or not videos_by_walk.get(walk[0]) %}
+                <button type="button" class="archive-walk" data-walk-id="{{ walk[0] }}" onclick="event.stopPropagation();">Archive</button>
                 <button type="button" class="enqueue-walk" data-walk-id="{{ walk[0] }}" onclick="event.stopPropagation();">Render</button>
-                {% endif %}
                 {% if videos_by_walk.get(walk[0]) %}
                 <button type="button" class="play-video" data-walk-id="{{ walk[0] }}" onclick="event.stopPropagation();">Play Video</button>
+                <button type="button" class="download-video" data-walk-id="{{ walk[0] }}" onclick="event.stopPropagation();">Download Video</button>
                 {% endif %}
             </h2>
             <div class="thumbs">
@@ -99,13 +102,21 @@
             const createWalkBtn = document.getElementById('createWalkBtn');
             const statusEl = document.getElementById('status');
             const stepsInput = document.getElementById('stepsInput');
+            const loopInput = document.getElementById('loopInput');
+            const queueInput = document.getElementById('queueInput');
             const queueList = document.getElementById('queueList');
             let selectedIds = [];
+            let lastRendering = null;
 
             function fetchQueueStatus() {
                 fetch('/queue_status')
                 .then(res => res.json())
                 .then(data => {
+                    if (lastRendering && data.rendering !== lastRendering) {
+                        window.location.reload();
+                        return;
+                    }
+                    lastRendering = data.rendering;
                     queueList.innerHTML = '';
                     if (data.rendering) {
                         const li = document.createElement('li');
@@ -176,14 +187,19 @@
                 fetch('/create_custom_walk', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ ids: selectedIds, steps: steps })
+                    body: JSON.stringify({ ids: selectedIds, steps: steps, loop: loopInput.checked, queue: queueInput.checked })
                 })
                 .then(response => response.json())
                 .then(data => {
-                    if (data.status === 'success') {
-                        statusEl.textContent = `Success! New walk with ID ${data.walk_id} created.`;
-                        alert('Custom walk created! You will now be redirected to the main page.');
-                        window.location.href = '/index?autoplay=true';
+                    if (data.status === 'success' || data.status === 'queued') {
+                        if (queueInput.checked) {
+                            statusEl.textContent = `Walk ${data.walk_id} queued for rendering.`;
+                            fetchQueueStatus();
+                        } else {
+                            statusEl.textContent = `Success! New walk with ID ${data.walk_id} created.`;
+                            alert('Custom walk created! You will now be redirected to the main page.');
+                            window.location.href = '/index?autoplay=true';
+                        }
                     } else {
                         throw new Error(data.message);
                     }
@@ -195,19 +211,19 @@
                 });
             });
 
-            document.querySelectorAll('.delete-walk').forEach(btn => {
+            document.querySelectorAll('.archive-walk').forEach(btn => {
                 btn.addEventListener('click', () => {
                     const walkId = btn.getAttribute('data-walk-id');
-                    if (!confirm(`Delete walk ${walkId}?`)) return;
+                    if (!confirm(`Archive walk ${walkId}?`)) return;
 
-                    fetch(`/delete_walk/${walkId}`, { method: 'DELETE' })
+                    fetch(`/archive_walk/${walkId}`, { method: 'POST' })
                     .then(response => response.json())
                     .then(data => {
                         if (data.status === 'success') {
-                            alert(`Walk ${walkId} deleted.`);
+                            alert(`Walk ${walkId} archived.`);
                             window.location.reload();
                         } else {
-                            throw new Error(data.message || 'Failed to delete walk');
+                            throw new Error(data.message || 'Failed to archive walk');
                         }
                     })
                     .catch(error => {
@@ -227,8 +243,9 @@
                         }
                         return response.json();
                     })
-                    .then(() => {
-                        alert(`Walk ${walkId} queued for rendering.`);
+                    .then(data => {
+                        const newId = data.walk_id;
+                        alert(`Walk ${newId} queued for rendering.`);
                         fetchQueueStatus();
                     })
                     .catch(err => {
@@ -246,6 +263,18 @@
                     video.src = `/generated_videos/${walkId}/walk.mp4`;
                     overlay.style.display = 'flex';
                     video.play();
+                });
+            });
+
+            document.querySelectorAll('.download-video').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const walkId = btn.getAttribute('data-walk-id');
+                    const link = document.createElement('a');
+                    link.href = `/generated_videos/${walkId}/walk.mp4`;
+                    link.download = `walk_${walkId}.mp4`;
+                    document.body.appendChild(link);
+                    link.click();
+                    document.body.removeChild(link);
                 });
             });
 

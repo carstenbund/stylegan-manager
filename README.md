@@ -26,8 +26,10 @@ python stylegan_server.py
 Generate images by performing a latent walk:
 
 ```bash
-# define a random walk and load it
-curl -X POST http://localhost:5000/start_random_walk
+# define a random walk with 120 steps and 4 keyframes and load it
+curl -X POST -H "Content-Type: application/json" \
+     -d '{"steps":120,"keyframes":4}' \
+     http://localhost:5000/start_random_walk
 
 # fetch the next image in the walk (PNG binary response)
 curl -o frame.png http://localhost:5000/next_image

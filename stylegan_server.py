@@ -8,6 +8,7 @@ import uuid
 import queue
 import threading
 import subprocess
+import shutil
 from collections import deque
 from flask import Flask, jsonify, render_template, request, send_from_directory
 
@@ -43,6 +44,7 @@ NETWORK_PKL = args.network_pkl
 DB_FILE = args.db_file
 outdir = args.outdir
 num_steps = args.steps
+ARCHIVE_DB_FILE = "archive.db"
 
 if outdir:
     os.makedirs(outdir, exist_ok=True)
@@ -70,6 +72,7 @@ queue_lock = threading.Lock()
 rendering_walk_id = None
 abort_event = threading.Event()
 cancelled_walks = set()
+worker_thread = None
 
 # ----------------------------------------------------------------------------
 # Database Helper Functions
@@ -96,17 +99,48 @@ def init_db():
     existing_cols = [row[1] for row in c.fetchall()]
     if "step_rate" not in existing_cols:
         c.execute("ALTER TABLE walks ADD COLUMN step_rate INTEGER NOT NULL DEFAULT 60")
-    # Create the generated_images table with a foreign key
+    # Create the generated_images table where each image stores its latent vector
     c.execute("""
         CREATE TABLE IF NOT EXISTS generated_images (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             walk_id INTEGER NOT NULL,
             step_index INTEGER NOT NULL,
-            filename TEXT NOT NULL UNIQUE,
+            filename TEXT NOT NULL,
+            latent_blob BLOB NOT NULL,
             timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (walk_id) REFERENCES walks (id)
+            FOREIGN KEY (walk_id) REFERENCES walks (id),
+            UNIQUE (walk_id, step_index),
+            UNIQUE (filename)
         )
     """)
+    c.execute("CREATE INDEX IF NOT EXISTS idx_genimg_walk ON generated_images(walk_id)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_genimg_filename ON generated_images(filename)")
+    conn.commit()
+    conn.close()
+
+
+def init_archive_db():
+    """Initializes the archive database with the same walks schema."""
+    conn = sqlite3.connect(ARCHIVE_DB_FILE)
+    c = conn.cursor()
+    c.execute(
+        """
+        CREATE TABLE IF NOT EXISTS walks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            type TEXT NOT NULL,
+            num_steps INTEGER NOT NULL,
+            vectors_blob BLOB NOT NULL,
+            model_pkl TEXT NOT NULL,
+            step_rate INTEGER NOT NULL DEFAULT 60,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    c.execute("PRAGMA table_info(walks)")
+    existing_cols = [row[1] for row in c.fetchall()]
+    if "step_rate" not in existing_cols:
+        c.execute("ALTER TABLE walks ADD COLUMN step_rate INTEGER NOT NULL DEFAULT 60")
     conn.commit()
     conn.close()
 
@@ -125,54 +159,62 @@ def create_walk_record(name, type, vectors, model_pkl, step_rate):
     conn.close()
     return new_walk_id
 
-def add_image_record(walk_id, step_index, relpath):
-    """Links a rendered image to a step in a walk.
+def add_image_record(walk_id, step_index, relpath, latent):
+    """Links a rendered image to a step in a walk and stores its latent vector.
 
     The `relpath` should be the path relative to `outdir` in the format
     `<walk_id>/<filename>`.
     """
+    latent = np.asarray(latent, dtype=np.float32)
+    latent_blob = latent.tobytes()
+
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     c.execute(
-        "INSERT INTO generated_images (walk_id, step_index, filename) VALUES (?, ?, ?)",
-        (walk_id, step_index, relpath),
+        "INSERT OR IGNORE INTO generated_images (walk_id, step_index, filename, latent_blob) VALUES (?, ?, ?, ?)",
+        (walk_id, step_index, relpath, latent_blob),
+    )
+    c.execute(
+        "UPDATE generated_images SET latent_blob = ? WHERE walk_id = ? AND step_index = ? AND filename = ?",
+        (latent_blob, walk_id, step_index, relpath),
     )
     conn.commit()
     conn.close()
 
 def get_walk_vectors(walk_id):
-    """Retrieves and decodes the vectors for a given walk ID."""
+    """Retrieves and decodes the planned vectors for a given walk ID."""
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-    c.execute("SELECT vectors_blob FROM walks WHERE id = ?", (walk_id,))
-    result = c.fetchone()
+    c.execute("SELECT vectors_blob, num_steps FROM walks WHERE id = ?", (walk_id,))
+    row = c.fetchone()
     conn.close()
-    if result:
-        return np.frombuffer(result[0], dtype=np.float32).reshape(-1, base_generator.z_dim)
-    return None
+    if not row:
+        return None
+    blob, n = row
+    if n <= 0:
+        return None
+    vec = np.frombuffer(blob, dtype=np.float32)
+    if vec.size % n != 0:
+        raise ValueError(
+            f"Corrupt vectors for walk {walk_id}: size={vec.size} not divisible by num_steps={n}"
+        )
+    latent_dim = vec.size // n
+    # np.frombuffer() returns a read-only array. Copy to ensure writability
+    # so that downstream frameworks (e.g. PyTorch) do not raise warnings
+    # when creating tensors from these latents.
+    return vec.reshape(n, latent_dim).copy()
 
 def get_vector_by_image_id(image_id):
-    """Gets a single vector by looking up an image's walk and step."""
+    """Returns the latent vector stored with a rendered image."""
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-    # Find the walk and step for the image
-    c.execute("SELECT walk_id, step_index FROM generated_images WHERE id = ?", (image_id,))
-    result = c.fetchone()
-    if not result:
-        conn.close()
-        return None
-    walk_id, step_index = result
-
-    # Retrieve the entire vector blob for that walk
-    c.execute("SELECT vectors_blob, num_steps FROM walks WHERE id = ?", (walk_id,))
-    blob_result = c.fetchone()
+    c.execute("SELECT latent_blob FROM generated_images WHERE id = ?", (image_id,))
+    row = c.fetchone()
     conn.close()
-    if blob_result:
-        vectors_blob, num_steps = blob_result
-        all_vectors = np.frombuffer(vectors_blob, dtype=np.float32).reshape(num_steps, -1)
-        # Return the specific vector at the correct index
-        return all_vectors[step_index]
-    return None
+    if not row or row[0] is None:
+        return None
+    # As above, make a writable copy of the vector.
+    return np.frombuffer(row[0], dtype=np.float32).copy()
 
 # ----------------------------------------------------------------------------
 # Background Worker for Rendering
@@ -193,15 +235,23 @@ def render_worker():
                 pass
             rendering_walk_id = walk_id
             abort_event.clear()
+        print(f"Starting rendering walk {walk_id}. Queue length: {render_queue.qsize()}")
         try:
-            vectors = get_walk_vectors(walk_id)
-            if vectors is None:
+            try:
+                vectors = get_walk_vectors(walk_id)
+                if vectors is None:
+                    continue
+                conn = sqlite3.connect(DB_FILE)
+                c = conn.cursor()
+                c.execute(
+                    "SELECT step_index FROM generated_images WHERE walk_id = ?",
+                    (walk_id,),
+                )
+                existing = {row[0] for row in c.fetchall()}
+                conn.close()
+            except Exception as e:
+                print(f"Database error for walk {walk_id}: {e}")
                 continue
-            conn = sqlite3.connect(DB_FILE)
-            c = conn.cursor()
-            c.execute("SELECT step_index FROM generated_images WHERE walk_id = ?", (walk_id,))
-            existing = {row[0] for row in c.fetchall()}
-            conn.close()
             for step, z in enumerate(vectors):
                 if abort_event.is_set():
                     break
@@ -215,7 +265,12 @@ def render_worker():
                     img_path = os.path.join(img_subdir, filename)
                     img.save(img_path, format="JPEG")
                     relpath = f"{walk_id}/{filename}"
-                    add_image_record(walk_id, step, relpath)
+                    try:
+                        add_image_record(walk_id, step, relpath, latent=z)
+                    except Exception as e:
+                        print(
+                            f"Database error adding image record for walk {walk_id}, step {step}: {e}"
+                        )
             # After rendering all steps, attempt to create a video using ffmpeg
             if outdir and not abort_event.is_set():
                 img_subdir = os.path.join(outdir, str(walk_id))
@@ -237,10 +292,17 @@ def render_worker():
                 rendering_walk_id = None
                 abort_event.clear()
             render_queue.task_done()
+            print(f"Finished rendering walk {walk_id}. Queue length: {render_queue.qsize()}")
 
 
-worker_thread = threading.Thread(target=render_worker, daemon=True)
-worker_thread.start()
+@app.before_first_request
+def start_worker():
+    init_db()
+    init_archive_db()
+    global worker_thread
+    if worker_thread is None:
+        worker_thread = threading.Thread(target=render_worker, daemon=True)
+        worker_thread.start()
 
 # ----------------------------------------------------------------------------
 # Flask Routes
@@ -257,10 +319,17 @@ def index_page():
 def start_random_walk():
     """Defines a new random walk, saves it, and loads it for rendering."""
     segments = 1
-    if request.is_json and "segments" in request.json:
-        segments = int(request.json["segments"])
+    if request.is_json:
+        if "keyframes" in request.json:
+            segments = max(int(request.json["keyframes"]) - 1, 1)
+        elif "segments" in request.json:
+            segments = int(request.json["segments"])
     else:
-        segments = int(request.args.get("segments", 1))
+        keyframes_arg = request.args.get("keyframes")
+        if keyframes_arg is not None:
+            segments = max(int(keyframes_arg) - 1, 1)
+        else:
+            segments = int(request.args.get("segments", 1))
 
     step_rate = num_steps
     if request.is_json and "steps" in request.json:
@@ -296,11 +365,39 @@ def load_walk(walk_id):
 
 @app.route("/enqueue_walk/<int:walk_id>", methods=["POST"])
 def enqueue_walk(walk_id):
-    """Adds a walk ID to the background rendering queue."""
-    render_queue.put(walk_id)
+    """Clone an existing walk and enqueue the new copy for rendering."""
+    # Retrieve the original walk's vectors
+    vectors = get_walk_vectors(walk_id)
+    if vectors is None:
+        return jsonify({"status": "error", "message": "Walk not found"}), 404
+
+    # Fetch metadata from the original walk
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute(
+        "SELECT name, type, model_pkl, step_rate FROM walks WHERE id = ?",
+        (walk_id,),
+    )
+    row = c.fetchone()
+    conn.close()
+    if not row:
+        return jsonify({"status": "error", "message": "Walk not found"}), 404
+
+    name, walk_type, model_pkl, step_rate = row
+    new_name = f"{name}_render"
+
+    # Create a cloned walk record
+    new_walk_id = create_walk_record(new_name, walk_type, vectors, model_pkl, step_rate)
+
+    # Enqueue the new walk ID
+    render_queue.put(new_walk_id)
     with queue_lock:
-        pending_walk_ids.append(walk_id)
-    return jsonify({"status": "enqueued", "walk_id": walk_id})
+        pending_walk_ids.append(new_walk_id)
+        queue_length = render_queue.qsize()
+    print(
+        f"Cloned walk {walk_id} as {new_walk_id} and enqueued. Queue length: {queue_length}"
+    )
+    return jsonify({"status": "enqueued", "walk_id": new_walk_id})
 
 
 @app.route("/queue_status", methods=["GET"])
@@ -347,7 +444,7 @@ def get_next_image():
         img_path = os.path.join(img_subdir, filename)
         img.save(img_path, format="JPEG")
         relpath = f"{current_walk['walk_id']}/{filename}"
-        add_image_record(current_walk["walk_id"], step, relpath)
+        add_image_record(current_walk["walk_id"], step, relpath, latent=z)
 
     current_walk["current_step"] += 1
 
@@ -402,6 +499,92 @@ def gallery_page():
     return render_template('gallery.html', walks=all_walks, images_by_walk=images_by_walk, videos_by_walk=videos_by_walk)
 
 
+@app.route('/archive')
+def archive_page():
+    """Renders a gallery of archived walks."""
+    conn = sqlite3.connect(ARCHIVE_DB_FILE)
+    c = conn.cursor()
+    c.execute("SELECT id, name, type, num_steps, step_rate FROM walks ORDER BY id DESC")
+    walks = c.fetchall()
+    conn.close()
+    return render_template('archive.html', walks=walks)
+
+
+@app.route('/archive_walk/<int:walk_id>', methods=['POST'])
+def archive_walk(walk_id):
+    """Moves a walk to the archive database and removes its data."""
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute(
+        "SELECT id, name, type, num_steps, vectors_blob, model_pkl, step_rate, timestamp FROM walks WHERE id = ?",
+        (walk_id,),
+    )
+    row = c.fetchone()
+    if not row:
+        conn.close()
+        return jsonify({"status": "error", "message": "Walk not found"}), 404
+
+    arch_conn = sqlite3.connect(ARCHIVE_DB_FILE)
+    arch_c = arch_conn.cursor()
+    arch_c.execute(
+        "INSERT INTO walks (id, name, type, num_steps, vectors_blob, model_pkl, step_rate, timestamp) VALUES (?,?,?,?,?,?,?,?)",
+        row,
+    )
+    arch_conn.commit()
+    arch_conn.close()
+
+    c.execute("DELETE FROM generated_images WHERE walk_id = ?", (walk_id,))
+    c.execute("DELETE FROM walks WHERE id = ?", (walk_id,))
+    conn.commit()
+    conn.close()
+
+    if outdir:
+        walk_dir = os.path.join(outdir, str(walk_id))
+        if os.path.isdir(walk_dir):
+            shutil.rmtree(walk_dir, ignore_errors=True)
+
+    return jsonify({"status": "success", "walk_id": walk_id})
+
+
+@app.route('/restore_walk/<int:archived_id>', methods=['POST'])
+def restore_walk(archived_id):
+    """Restores a walk from the archive to the main database."""
+    queue_flag = request.args.get('queue') in ('1', 'true', 'yes')
+
+    arch_conn = sqlite3.connect(ARCHIVE_DB_FILE)
+    arch_c = arch_conn.cursor()
+    arch_c.execute(
+        "SELECT id, name, type, num_steps, vectors_blob, model_pkl, step_rate, timestamp FROM walks WHERE id = ?",
+        (archived_id,),
+    )
+    row = arch_c.fetchone()
+    if not row:
+        arch_conn.close()
+        return jsonify({"status": "error", "message": "Walk not found"}), 404
+
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute(
+        "INSERT INTO walks (id, name, type, num_steps, vectors_blob, model_pkl, step_rate, timestamp) VALUES (?,?,?,?,?,?,?,?)",
+        row,
+    )
+    conn.commit()
+    conn.close()
+
+    arch_c.execute("DELETE FROM walks WHERE id = ?", (archived_id,))
+    arch_conn.commit()
+    arch_conn.close()
+
+    restored_id = row[0]
+
+    if queue_flag:
+        render_queue.put(restored_id)
+        with queue_lock:
+            pending_walk_ids.append(restored_id)
+
+    return jsonify({"status": "success", "walk_id": restored_id})
+
+
 @app.route('/delete_walk/<int:walk_id>', methods=['DELETE'])
 def delete_walk(walk_id):
     """Deletes a walk and all of its associated images from disk and database."""
@@ -439,53 +622,82 @@ def delete_walk(walk_id):
 
 @app.route('/generated_images/<int:walk_id>/<filename>')
 def serve_generated_image(walk_id, filename):
+    if not outdir:
+        return ("Outdir not configured", 404)
     return send_from_directory(os.path.join(outdir, str(walk_id)), filename)
 
 
 @app.route('/generated_videos/<int:walk_id>/<filename>')
 def serve_generated_video(walk_id, filename):
+    if not outdir:
+        return ("Outdir not configured", 404)
     return send_from_directory(os.path.join(outdir, str(walk_id)), filename)
 
 
 @app.route('/create_custom_walk', methods=['POST'])
 def create_custom_walk():
-    """Creates a new walk definition from selected keyframe images."""
-    data = request.get_json()
-    image_ids = data.get('ids', [])
-    steps_per_leg = data.get('steps', num_steps)
+    data = request.get_json(silent=True) or {}
+    image_ids = data.get('ids') or []
+    try:
+        steps_per_leg = int(data.get('steps', num_steps))
+    except (TypeError, ValueError):
+        return jsonify({"status": "error", "message": "`steps` must be an integer"}), 400
+
+    queue_render = bool(data.get('queue', False))
+    loop = bool(data.get('loop'))
 
     if len(image_ids) < 2:
         return jsonify({"status": "error", "message": "Select at least two images"}), 400
+    if steps_per_leg < 2:
+        return jsonify({"status": "error", "message": "`steps` must be >= 2"}), 400
 
-    # Get the single vector for each selected keyframe image
-    keyframe_vectors = [get_vector_by_image_id(img_id) for img_id in image_ids]
-    keyframe_vectors = [v for v in keyframe_vectors if v is not None]
+    keyframes = []
+    for iid in image_ids:
+        v = get_vector_by_image_id(int(iid))
+        if v is None:
+            return jsonify({"status": "error", "message": f"Image id {iid} not found or missing latent"}), 404
+        keyframes.append(np.asarray(v, dtype=np.float32))
 
-    # Interpolate between keyframes
-    full_path = []
-    for i in range(len(keyframe_vectors) - 1):
-        z_start, z_end = keyframe_vectors[i], keyframe_vectors[i+1]
-        ratios = np.linspace(0, 1, num=steps_per_leg, dtype=np.float32)
-        segment = np.array([(1.0 - r) * z_start + r * z_end for r in ratios], dtype=np.float32)
-        full_path.extend(segment)
+    dims = {v.shape[0] for v in keyframes}
+    if len(dims) != 1:
+        return jsonify({
+            "status": "error",
+            "message": f"Selected images have different latent lengths {sorted(dims)}; cannot interpolate."
+        }), 400
 
-    if full_path:
-        walk_name = f"curated_{uuid.uuid4().hex[:8]}"
-        vectors = np.array(full_path, dtype=np.float32)
+    ratios = np.linspace(0.0, 1.0, num=steps_per_leg, dtype=np.float32)
+    segments = []
+    for a, b in zip(keyframes, keyframes[1:]):
+        seg = (1.0 - ratios)[:, None] * a[None, :] + ratios[:, None] * b[None, :]
+        segments.append(seg)
 
-        # Save the new curated walk to the database
-        walk_id = create_walk_record(walk_name, 'curated', vectors, NETWORK_PKL, steps_per_leg)
+    if loop and len(keyframes) > 1:
+        a, b = keyframes[-1], keyframes[0]
+        seg = (1.0 - ratios)[:, None] * a[None, :] + ratios[:, None] * b[None, :]
+        segments.append(seg)
 
-        # Automatically load it
-        current_walk["walk_id"] = walk_id
-        current_walk["vectors"] = vectors
-        current_walk["current_step"] = 0
+    vectors = np.vstack(segments).astype(np.float32, copy=False)
 
-        return jsonify({"status": "success", "walk_id": walk_id, "name": walk_name})
+    walk_name = f"curated_{uuid.uuid4().hex[:8]}"
+    walk_id = create_walk_record(walk_name, 'curated', vectors, NETWORK_PKL, steps_per_leg)
 
-    return jsonify({"status": "error", "message": "Could not create path"}), 500
+    if queue_render:
+        render_queue.put(walk_id)
+        with queue_lock:
+            pending_walk_ids.append(walk_id)
+        return jsonify({
+            "status": "queued",
+            "walk_id": walk_id,
+            "name": walk_name,
+            "steps": len(vectors),
+        })
+
+    current_walk["walk_id"] = walk_id
+    current_walk["vectors"] = vectors
+    current_walk["current_step"] = 0
+
+    return jsonify({"status": "success", "walk_id": walk_id, "name": walk_name, "steps": len(vectors)})
 
 
 if __name__ == "__main__":
-    init_db()
     app.run(host="0.0.0.0", port=5000)
