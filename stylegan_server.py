@@ -25,8 +25,9 @@ from stylegan_manager.db import (
     get_walk_info,
     update_walk_info,
     fetch_all_walks,
-    fetch_all_images,
+    fetch_images,
     fetch_archived_walks,
+    set_image_like,
     archive_walk as db_archive_walk,
     restore_walk as db_restore_walk,
     delete_walk as db_delete_walk,
@@ -388,10 +389,11 @@ def get_next_image():
 @app.route('/gallery')
 def gallery_page():
     """Renders a gallery of all defined walks and their rendered images."""
+    liked_only = request.args.get('liked') == '1'
     all_walks = fetch_all_walks(DB_FILE)
 
     images_by_walk = {}
-    for img_id, walk_id, relpath, liked in fetch_all_images(DB_FILE):
+    for img_id, walk_id, relpath, liked in fetch_images(DB_FILE, liked_only=liked_only):
         if walk_id not in images_by_walk:
             images_by_walk[walk_id] = []
         fname = relpath.split('/', 1)[1] if '/' in relpath else relpath
@@ -408,6 +410,20 @@ def gallery_page():
             videos_by_walk[walk[0]] = os.path.exists(video_path)
 
     return render_template('gallery.html', walks=all_walks, images_by_walk=images_by_walk, videos_by_walk=videos_by_walk)
+
+
+@app.route('/image/<int:image_id>/like', methods=['POST'])
+def like_image(image_id):
+    """Mark an image as liked."""
+    set_image_like(DB_FILE, image_id, True)
+    return jsonify({"status": "ok"})
+
+
+@app.route('/image/<int:image_id>/like', methods=['DELETE'])
+def unlike_image(image_id):
+    """Remove the liked mark from an image."""
+    set_image_like(DB_FILE, image_id, False)
+    return jsonify({"status": "ok"})
 
 
 @app.route('/walk_info/<int:walk_id>', methods=['GET'])

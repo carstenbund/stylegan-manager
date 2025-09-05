@@ -335,15 +335,16 @@ def fetch_images(db_file: str, liked_only: bool = False) -> List[Tuple[int, int,
     query = "SELECT id, walk_id, filename, liked FROM generated_images"
     if liked_only:
         query += " WHERE liked = 1"
+    query += " ORDER BY liked DESC, id"
     c.execute(query)
     rows = c.fetchall()
     conn.close()
     return rows
 
 
-def fetch_all_images(db_file: str) -> List[Tuple[int, int, str, int]]:
+def fetch_all_images(db_file: str, liked_only: bool = False) -> List[Tuple[int, int, str, int]]:
     """Backwards-compatible wrapper for fetching all images."""
-    return fetch_images(db_file)
+    return fetch_images(db_file, liked_only=liked_only)
 
 def get_vector_by_image_id(db_file: str, image_id: int) -> Optional[np.ndarray]:
     conn = sqlite3.connect(db_file)
