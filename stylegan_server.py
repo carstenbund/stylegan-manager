@@ -11,7 +11,8 @@ import shutil
 from flask import Flask, jsonify, render_template, request, send_from_directory
 
 from stylegan_manager.models import StyleGANGenerator
-from stylegan_manager import RandomWalk, CustomWalk
+from stylegan_manager import RandomWalk
+from stylegan_manager.walks.custom_walk import interpolate_vectors
 from stylegan_manager.videos.manager import VideoManager
 from stylegan_manager.db import (
     init_db,
@@ -292,10 +293,9 @@ def enqueue_walk(walk_id):
             keyframes.append(vectors[-1])
         else:
             keyframes = [vectors[0], vectors[-1]]
-        tracker = LatentTracker(base_generator)
-        walk = CustomWalk(tracker, points=keyframes, steps=new_step_rate)
-        walk.generate()
-        new_vectors = np.concatenate(tracker.latents, axis=0).astype(np.float32, copy=False)
+        new_vectors = interpolate_vectors(keyframes, new_step_rate).astype(
+            np.float32, copy=False
+        )
 
     new_name = f"{name}_render"
 
@@ -511,10 +511,7 @@ def create_custom_walk():
         }), 400
 
     points = keyframes + [keyframes[0]] if loop and len(keyframes) > 1 else keyframes
-    tracker = LatentTracker(base_generator)
-    walk = CustomWalk(tracker, points=points, steps=steps_per_leg)
-    walk.generate()
-    vectors = np.concatenate(tracker.latents, axis=0).astype(np.float32, copy=False)
+    vectors = interpolate_vectors(points, steps_per_leg).astype(np.float32, copy=False)
 
     walk_name = f"curated_{uuid.uuid4().hex[:8]}"
     walk_id = create_walk(DB_FILE, walk_name, 'curated', vectors, NETWORK_PKL, steps_per_leg)
