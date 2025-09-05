@@ -242,7 +242,13 @@ def load_walk(walk_id):
 
 @app.route("/enqueue_walk/<int:walk_id>", methods=["POST"])
 def enqueue_walk(walk_id):
-    """Clone an existing walk and enqueue the new copy for rendering."""
+    """Clone an existing walk and enqueue the new copy for rendering.
+
+    A new step rate can be provided in the request payload or query string.
+    If supplied and different from the original walk's step rate, the walk's
+    vectors are re-interpolated to match the new step rate.
+    """
+
     # Retrieve the original walk's vectors
     vectors = get_walk_vectors(DB_FILE, walk_id)
     if vectors is None:
@@ -253,11 +259,48 @@ def enqueue_walk(walk_id):
     if not row:
         return jsonify({"status": "error", "message": "Walk not found"}), 404
 
-    name, walk_type, model_pkl, step_rate = row
+    name, walk_type, model_pkl, orig_step_rate = row
+
+    # Determine desired step rate
+    new_step_rate = orig_step_rate
+    if request.is_json and "steps" in request.json:
+        try:
+            new_step_rate = int(request.json["steps"])
+        except (TypeError, ValueError):
+            return (
+                jsonify({"status": "error", "message": "`steps` must be an integer"}),
+                400,
+            )
+    else:
+        steps_arg = request.args.get("steps")
+        if steps_arg is not None:
+            try:
+                new_step_rate = int(steps_arg)
+            except (TypeError, ValueError):
+                return (
+                    jsonify({"status": "error", "message": "`steps` must be an integer"}),
+                    400,
+                )
+
+    new_vectors = vectors
+    # Recompute vectors if step rate changed for curated walks
+    if walk_type == "curated" and new_step_rate != orig_step_rate:
+        total = len(vectors)
+        if orig_step_rate > 0 and (total - 1) // orig_step_rate > 0:
+            segments = (total - 1) // orig_step_rate
+            keyframes = [vectors[i * orig_step_rate] for i in range(segments)]
+            keyframes.append(vectors[-1])
+        else:
+            keyframes = [vectors[0], vectors[-1]]
+        tracker = LatentTracker(base_generator)
+        walk = CustomWalk(tracker, points=keyframes, steps=new_step_rate)
+        walk.generate()
+        new_vectors = np.concatenate(tracker.latents, axis=0).astype(np.float32, copy=False)
+
     new_name = f"{name}_render"
 
-    # Create a cloned walk record
-    new_walk_id = create_walk(DB_FILE, new_name, walk_type, vectors, model_pkl, step_rate)
+    # Create a cloned walk record with the new step rate
+    new_walk_id = create_walk(DB_FILE, new_name, walk_type, new_vectors, model_pkl, new_step_rate)
 
     # Enqueue the new walk ID
     render_queue.put(new_walk_id)
