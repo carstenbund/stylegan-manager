@@ -16,6 +16,8 @@
         <button id="play">Play</button>
         <label for="randSteps">Steps:</label>
         <input type="number" id="randSteps" value="120" min="2" style="width: 80px;" />
+        <label for="randKeyframes">Keyframes:</label>
+        <input type="number" id="randKeyframes" value="2" min="2" style="width: 80px;" />
         <button id="startRandom">Start Random Walk</button>
         <button id="stop">Stop</button>
         <a href="/gallery">Gallery</a>
@@ -52,10 +54,11 @@
 
         document.getElementById('startRandom').addEventListener('click', async () => {
             const steps = parseInt(document.getElementById('randSteps').value, 10) || 120;
+            const keyframes = parseInt(document.getElementById('randKeyframes').value, 10) || 2;
             await fetch('/start_random_walk', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ steps })
+                body: JSON.stringify({ steps, keyframes })
             });
             running = true;
             fetchLoop();
