@@ -20,6 +20,14 @@
             align-items: center; justify-content: center; font-weight: bold;
             border: 2px solid white; display: none;
         }
+        .img-container .like-btn {
+            position: absolute; bottom: 5px; left: 5px;
+            width: 28px; height: 28px; border-radius: 50%;
+            border: none; background: rgba(255,255,255,0.8);
+            display: flex; align-items: center; justify-content: center;
+            font-size: 18px; cursor: pointer; color: #bbb;
+        }
+        .img-container .like-btn.liked { color: #dc3545; }
         .img-container input:checked + img {
             box-shadow: 0 0 0 4px #007bff;
             transform: scale(0.95);
@@ -53,6 +61,10 @@
 <body>
     <h1>Walk Gallery</h1>
     <p>Select images in the order you want to create a new walk. <a href="/">Back to Generator</a> | <a href="/archive">Archived Walks</a></p>
+
+    <div class="controls">
+        <label><input type="checkbox" id="likedOnlyToggle" {% if liked_only %}checked{% endif %}> Show liked only</label>
+    </div>
 
     <div class="controls">
         <label for="stepsInput">Steps per leg:</label>
@@ -97,6 +109,7 @@
                 <input type="checkbox" name="image_selection" value="{{ image.id }}">
                 <img src="{{ url_for('serve_generated_image', walk_id=walk[0], filename=image.filename) }}" alt="{{ image.filename }}" loading="lazy">
                 <div class="selection-order"></div>
+                <button type="button" class="like-btn{% if image.liked %} liked{% endif %}" data-image-id="{{ image.id }}">{{ '♥' if image.liked else '♡' }}</button>
             </label>
             {% endfor %}
         </div>
@@ -136,6 +149,7 @@
             const infoName = document.getElementById('infoName');
             const infoStepRate = document.getElementById('infoStepRate');
             const infoNote = document.getElementById('infoNote');
+            const likedOnlyToggle = document.getElementById('likedOnlyToggle');
             let selectedIds = [];
             let lastRendering = null;
 
@@ -187,6 +201,36 @@
 
             fetchQueueStatus();
             setInterval(fetchQueueStatus, 5000);
+
+            if (likedOnlyToggle) {
+                likedOnlyToggle.addEventListener('change', () => {
+                    const params = new URLSearchParams(window.location.search);
+                    if (likedOnlyToggle.checked) {
+                        params.set('liked', '1');
+                    } else {
+                        params.delete('liked');
+                    }
+                    window.location.search = params.toString();
+                });
+            }
+
+            document.querySelectorAll('.like-btn').forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const imageId = btn.getAttribute('data-image-id');
+                    const isLiked = btn.classList.contains('liked');
+                    fetch(`/image/${imageId}/like`, { method: isLiked ? 'DELETE' : 'POST' })
+                    .then(res => {
+                        if (!res.ok) { throw new Error('Failed to update'); }
+                        btn.classList.toggle('liked');
+                        btn.textContent = btn.classList.contains('liked') ? '♥' : '♡';
+                        if (likedOnlyToggle && likedOnlyToggle.checked && !btn.classList.contains('liked')) {
+                            btn.closest('.img-container').remove();
+                        }
+                    })
+                    .catch(err => console.error('Error:', err));
+                });
+            });
 
             document.querySelectorAll('.gallery').forEach(gallery => {
                 gallery.addEventListener('change', (event) => {

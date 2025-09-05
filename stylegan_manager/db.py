@@ -56,9 +56,12 @@ def init_db(db_file: str) -> None:
     existing_cols = [row[1] for row in c.fetchall()]
     if "liked" not in existing_cols:
         c.execute("ALTER TABLE generated_images ADD COLUMN liked INTEGER NOT NULL DEFAULT 0")
+    if "liked_at" not in existing_cols:
+        c.execute("ALTER TABLE generated_images ADD COLUMN liked_at DATETIME")
     c.execute("CREATE INDEX IF NOT EXISTS idx_genimg_walk ON generated_images(walk_id)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_genimg_filename ON generated_images(filename)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_genimg_liked ON generated_images(liked)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_genimg_liked_at ON generated_images(liked_at)")
     conn.commit()
     conn.close()
 
@@ -320,10 +323,16 @@ def set_image_like(db_file: str, image_id: int, liked: bool) -> None:
     """Mark an image as liked or unliked."""
     conn = sqlite3.connect(db_file)
     c = conn.cursor()
-    c.execute(
-        "UPDATE generated_images SET liked = ? WHERE id = ?",
-        (1 if liked else 0, image_id),
-    )
+    if liked:
+        c.execute(
+            "UPDATE generated_images SET liked = 1, liked_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (image_id,),
+        )
+    else:
+        c.execute(
+            "UPDATE generated_images SET liked = 0, liked_at = NULL WHERE id = ?",
+            (image_id,),
+        )
     conn.commit()
     conn.close()
 
@@ -334,8 +343,9 @@ def fetch_images(db_file: str, liked_only: bool = False) -> List[Tuple[int, int,
     c = conn.cursor()
     query = "SELECT id, walk_id, filename, liked FROM generated_images"
     if liked_only:
-        query += " WHERE liked = 1"
-    query += " ORDER BY liked DESC, id"
+        query += " WHERE liked = 1 ORDER BY liked_at DESC"
+    else:
+        query += " ORDER BY liked DESC, id"
     c.execute(query)
     rows = c.fetchall()
     conn.close()

@@ -409,7 +409,7 @@ def gallery_page():
             video_path = os.path.join(outdir, str(walk[0]), "walk.mp4")
             videos_by_walk[walk[0]] = os.path.exists(video_path)
 
-    return render_template('gallery.html', walks=all_walks, images_by_walk=images_by_walk, videos_by_walk=videos_by_walk)
+    return render_template('gallery.html', walks=all_walks, images_by_walk=images_by_walk, videos_by_walk=videos_by_walk, liked_only=liked_only)
 
 
 @app.route('/image/<int:image_id>/like', methods=['POST'])
