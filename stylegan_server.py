@@ -391,13 +391,14 @@ def gallery_page():
     all_walks = fetch_all_walks(DB_FILE)
 
     images_by_walk = {}
-    for img_id, walk_id, relpath in fetch_all_images(DB_FILE):
+    for img_id, walk_id, relpath, liked in fetch_all_images(DB_FILE):
         if walk_id not in images_by_walk:
             images_by_walk[walk_id] = []
         fname = relpath.split('/', 1)[1] if '/' in relpath else relpath
         images_by_walk[walk_id].append({
             'id': img_id,
             'filename': fname,
+            'liked': bool(liked),
         })
 
     videos_by_walk = {}
