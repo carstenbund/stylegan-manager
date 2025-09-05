@@ -45,6 +45,18 @@ Visit `http://localhost:5000/gallery` to browse saved walks and images. The
 gallery interface also allows creating curated walks by interpolating between
 selected keyframes.
 
+### Gallery Filters
+
+The gallery view supports optional query parameters to control which images are
+shown. Filters are parsed by the server and mirrored on the client so that
+additional types can be added with minimal changes. Currently the following
+filter is available:
+
+* `liked=1` – only display images that have been marked as liked.
+
+Future filters can be introduced by extending the server's filter parser and
+adding corresponding UI elements in the gallery template.
+
 ## Library usage
 
 The project now exposes a lightweight Python package, ``stylegan_manager``,

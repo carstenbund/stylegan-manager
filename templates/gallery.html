@@ -63,7 +63,7 @@
     <p>Select images in the order you want to create a new walk. <a href="/">Back to Generator</a> | <a href="/archive">Archived Walks</a></p>
 
     <div class="controls">
-        <label><input type="checkbox" id="likedOnlyToggle" {% if liked_only %}checked{% endif %}> Show liked only</label>
+        <label><input type="checkbox" id="likedOnlyToggle" {% if filters.liked %}checked{% endif %}> Show liked only</label>
     </div>
 
     <div class="controls">
@@ -202,15 +202,21 @@
             fetchQueueStatus();
             setInterval(fetchQueueStatus, 5000);
 
+            function updateFilters(newFilters) {
+                const params = new URLSearchParams(window.location.search);
+                Object.entries(newFilters).forEach(([key, value]) => {
+                    if (value === null || value === undefined || value === false) {
+                        params.delete(key);
+                    } else {
+                        params.set(key, value);
+                    }
+                });
+                window.location.search = params.toString();
+            }
+
             if (likedOnlyToggle) {
                 likedOnlyToggle.addEventListener('change', () => {
-                    const params = new URLSearchParams(window.location.search);
-                    if (likedOnlyToggle.checked) {
-                        params.set('liked', '1');
-                    } else {
-                        params.delete('liked');
-                    }
-                    window.location.search = params.toString();
+                    updateFilters({ liked: likedOnlyToggle.checked ? '1' : null });
                 });
             }
 
