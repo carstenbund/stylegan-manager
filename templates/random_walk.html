@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Random Walk</title>
+    <style>
+        body { font-family: Arial, sans-serif; text-align: center; }
+        img { max-width: 512px; width: 100%; height: auto; margin: 1rem auto; }
+    </style>
+</head>
+<body>
+    <h1>Random Walk</h1>
+    {% for frame in frames %}
+    <div>
+        <p>Frame {{ loop.index0 }}</p>
+        <img src="data:image/png;base64,{{ frame }}" alt="Frame {{ loop.index0 }}" />
+    </div>
+    {% endfor %}
+</body>
+</html>
