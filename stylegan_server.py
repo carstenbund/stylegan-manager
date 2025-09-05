@@ -495,6 +495,8 @@ def create_custom_walk():
     except (TypeError, ValueError):
         return jsonify({"status": "error", "message": "`steps` must be an integer"}), 400
 
+    queue_render = bool(data.get('queue', False))
+
     if len(image_ids) < 2:
         return jsonify({"status": "error", "message": "Select at least two images"}), 400
     if steps_per_leg < 2:
@@ -524,6 +526,17 @@ def create_custom_walk():
 
     walk_name = f"curated_{uuid.uuid4().hex[:8]}"
     walk_id = create_walk_record(walk_name, 'curated', vectors, NETWORK_PKL, steps_per_leg)
+
+    if queue_render:
+        render_queue.put(walk_id)
+        with queue_lock:
+            pending_walk_ids.append(walk_id)
+        return jsonify({
+            "status": "queued",
+            "walk_id": walk_id,
+            "name": walk_name,
+            "steps": len(vectors),
+        })
 
     current_walk["walk_id"] = walk_id
     current_walk["vectors"] = vectors
