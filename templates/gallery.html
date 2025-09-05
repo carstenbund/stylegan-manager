@@ -29,8 +29,8 @@
         }
         #createWalkBtn { padding: 10px 20px; font-size: 16px; cursor: pointer; border-radius: 5px; border: none; background-color: #28a745; color: white; }
         #createWalkBtn:hover { background-color: #218838; }
-        .delete-walk { padding: 5px 10px; margin-left: 10px; font-size: 14px; cursor: pointer; border-radius: 4px; border: none; background-color: #dc3545; color: white; }
-        .delete-walk:hover { background-color: #c82333; }
+        .archive-walk { padding: 5px 10px; margin-left: 10px; font-size: 14px; cursor: pointer; border-radius: 4px; border: none; background-color: #6c757d; color: white; }
+        .archive-walk:hover { background-color: #5a6268; }
         .play-video, .download-video, .enqueue-walk { padding: 5px 10px; margin-left: 10px; font-size: 14px; cursor: pointer; border-radius: 4px; border: none; background-color: #28a745; color: white; }
         .play-video:hover, .download-video:hover, .enqueue-walk:hover { background-color: #218838; }
         summary { cursor: pointer; list-style: none; }
@@ -44,7 +44,7 @@
 </head>
 <body>
     <h1>Walk Gallery</h1>
-    <p>Select images in the order you want to create a new walk. <a href="/">Back to Generator</a></p>
+    <p>Select images in the order you want to create a new walk. <a href="/">Back to Generator</a> | <a href="/archive">Archived Walks</a></p>
 
     <div class="controls">
         <label for="stepsInput">Steps per leg:</label>
@@ -65,7 +65,7 @@
     <details class="walk">
         <summary>
             <h2>Walk {{ walk[0] }}: {{ walk[1] }} ({{ walk[2] }}, step rate {{ walk[4] }})
-                <button type="button" class="delete-walk" data-walk-id="{{ walk[0] }}" onclick="event.stopPropagation();">Delete</button>
+                <button type="button" class="archive-walk" data-walk-id="{{ walk[0] }}" onclick="event.stopPropagation();">Archive</button>
                 <button type="button" class="enqueue-walk" data-walk-id="{{ walk[0] }}" onclick="event.stopPropagation();">Render</button>
                 {% if videos_by_walk.get(walk[0]) %}
                 <button type="button" class="play-video" data-walk-id="{{ walk[0] }}" onclick="event.stopPropagation();">Play Video</button>
@@ -211,19 +211,19 @@
                 });
             });
 
-            document.querySelectorAll('.delete-walk').forEach(btn => {
+            document.querySelectorAll('.archive-walk').forEach(btn => {
                 btn.addEventListener('click', () => {
                     const walkId = btn.getAttribute('data-walk-id');
-                    if (!confirm(`Delete walk ${walkId}?`)) return;
+                    if (!confirm(`Archive walk ${walkId}?`)) return;
 
-                    fetch(`/delete_walk/${walkId}`, { method: 'DELETE' })
+                    fetch(`/archive_walk/${walkId}`, { method: 'POST' })
                     .then(response => response.json())
                     .then(data => {
                         if (data.status === 'success') {
-                            alert(`Walk ${walkId} deleted.`);
+                            alert(`Walk ${walkId} archived.`);
                             window.location.reload();
                         } else {
-                            throw new Error(data.message || 'Failed to delete walk');
+                            throw new Error(data.message || 'Failed to archive walk');
                         }
                     })
                     .catch(error => {
