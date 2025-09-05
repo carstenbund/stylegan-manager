@@ -27,6 +27,7 @@ from stylegan_manager.db import (
     archive_walk as db_archive_walk,
     restore_walk as db_restore_walk,
     delete_walk as db_delete_walk,
+    delete_archived_walk as db_delete_archived_walk,
     existing_step_indices,
 )
 
@@ -360,7 +361,10 @@ def archive_page():
 @app.route('/archive_walk/<int:walk_id>', methods=['POST'])
 def archive_walk(walk_id):
     """Moves a walk to the archive database and removes its data."""
-    if not db_archive_walk(DB_FILE, ARCHIVE_DB_FILE, walk_id):
+    note = ""
+    if request.is_json:
+        note = request.json.get('note', '').strip()
+    if not db_archive_walk(DB_FILE, ARCHIVE_DB_FILE, walk_id, note):
         return jsonify({"status": "error", "message": "Walk not found"}), 404
 
     if outdir:
@@ -368,6 +372,13 @@ def archive_walk(walk_id):
         if os.path.isdir(walk_dir):
             shutil.rmtree(walk_dir, ignore_errors=True)
 
+    return jsonify({"status": "success", "walk_id": walk_id})
+
+
+@app.route('/delete_archived_walk/<int:walk_id>', methods=['DELETE'])
+def delete_archived_walk(walk_id):
+    """Deletes a walk from the archive database."""
+    db_delete_archived_walk(ARCHIVE_DB_FILE, walk_id)
     return jsonify({"status": "success", "walk_id": walk_id})
 
 

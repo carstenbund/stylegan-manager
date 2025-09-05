@@ -31,6 +31,8 @@
         #createWalkBtn:hover { background-color: #218838; }
         .archive-walk { padding: 5px 10px; margin-left: 10px; font-size: 14px; cursor: pointer; border-radius: 4px; border: none; background-color: #6c757d; color: white; }
         .archive-walk:hover { background-color: #5a6268; }
+        .delete-walk { padding: 5px 10px; margin-left: 10px; font-size: 14px; cursor: pointer; border-radius: 4px; border: none; background-color: #dc3545; color: white; }
+        .delete-walk:hover { background-color: #c82333; }
         .play-video, .download-video, .enqueue-walk { padding: 5px 10px; margin-left: 10px; font-size: 14px; cursor: pointer; border-radius: 4px; border: none; background-color: #28a745; color: white; }
         .play-video:hover, .download-video:hover, .enqueue-walk:hover { background-color: #218838; }
         summary { cursor: pointer; list-style: none; }
@@ -66,6 +68,7 @@
         <summary>
             <h2>Walk {{ walk[0] }}: {{ walk[1] }} ({{ walk[2] }}, step rate {{ walk[4] }})
                 <button type="button" class="archive-walk" data-walk-id="{{ walk[0] }}" onclick="event.stopPropagation();">Archive</button>
+                <button type="button" class="delete-walk" data-walk-id="{{ walk[0] }}" onclick="event.stopPropagation();">Delete</button>
                 <button type="button" class="enqueue-walk" data-walk-id="{{ walk[0] }}" onclick="event.stopPropagation();">Render</button>
                 {% if videos_by_walk.get(walk[0]) %}
                 <button type="button" class="play-video" data-walk-id="{{ walk[0] }}" onclick="event.stopPropagation();">Play Video</button>
@@ -215,8 +218,13 @@
                 btn.addEventListener('click', () => {
                     const walkId = btn.getAttribute('data-walk-id');
                     if (!confirm(`Archive walk ${walkId}?`)) return;
+                    const note = prompt('Enter a note for this walk (optional):') || '';
 
-                    fetch(`/archive_walk/${walkId}`, { method: 'POST' })
+                    fetch(`/archive_walk/${walkId}`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ note })
+                    })
                     .then(response => response.json())
                     .then(data => {
                         if (data.status === 'success') {
@@ -224,6 +232,28 @@
                             window.location.reload();
                         } else {
                             throw new Error(data.message || 'Failed to archive walk');
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Error:', error);
+                        alert(`Error: ${error.message}`);
+                    });
+                });
+            });
+
+            document.querySelectorAll('.delete-walk').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const walkId = btn.getAttribute('data-walk-id');
+                    if (!confirm(`Delete walk ${walkId}? This cannot be undone.`)) return;
+
+                    fetch(`/delete_walk/${walkId}`, { method: 'DELETE' })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.status === 'success') {
+                            alert(`Walk ${walkId} deleted.`);
+                            window.location.reload();
+                        } else {
+                            throw new Error(data.message || 'Failed to delete walk');
                         }
                     })
                     .catch(error => {

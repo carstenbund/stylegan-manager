@@ -66,7 +66,8 @@ def init_archive_db(archive_file: str) -> None:
             vectors_blob BLOB NOT NULL,
             model_pkl TEXT NOT NULL,
             step_rate INTEGER NOT NULL DEFAULT 60,
-            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+            note TEXT
         )
         """
     )
@@ -74,6 +75,8 @@ def init_archive_db(archive_file: str) -> None:
     existing_cols = [row[1] for row in c.fetchall()]
     if "step_rate" not in existing_cols:
         c.execute("ALTER TABLE walks ADD COLUMN step_rate INTEGER NOT NULL DEFAULT 60")
+    if "note" not in existing_cols:
+        c.execute("ALTER TABLE walks ADD COLUMN note TEXT")
     conn.commit()
     conn.close()
 
@@ -145,7 +148,7 @@ def delete_walk(db_file: str, walk_id: int) -> List[str]:
     conn.close()
     return image_paths
 
-def archive_walk(db_file: str, archive_file: str, walk_id: int) -> bool:
+def archive_walk(db_file: str, archive_file: str, walk_id: int, note: str = "") -> bool:
     """Move a walk from main DB to archive DB."""
     conn = sqlite3.connect(db_file)
     c = conn.cursor()
@@ -160,8 +163,8 @@ def archive_walk(db_file: str, archive_file: str, walk_id: int) -> bool:
     arch_conn = sqlite3.connect(archive_file)
     arch_c = arch_conn.cursor()
     arch_c.execute(
-        "INSERT INTO walks (id, name, type, num_steps, vectors_blob, model_pkl, step_rate, timestamp) VALUES (?,?,?,?,?,?,?,?)",
-        row,
+        "INSERT INTO walks (id, name, type, num_steps, vectors_blob, model_pkl, step_rate, timestamp, note) VALUES (?,?,?,?,?,?,?,?,?)",
+        row + (note,),
     )
     arch_conn.commit()
     arch_conn.close()
@@ -174,7 +177,7 @@ def archive_walk(db_file: str, archive_file: str, walk_id: int) -> bool:
 def fetch_archived_walks(archive_file: str) -> List[Tuple]:
     conn = sqlite3.connect(archive_file)
     c = conn.cursor()
-    c.execute("SELECT id, name, type, num_steps, step_rate FROM walks ORDER BY id DESC")
+    c.execute("SELECT id, name, type, num_steps, step_rate, note FROM walks ORDER BY id DESC")
     walks = c.fetchall()
     conn.close()
     return walks
@@ -202,6 +205,15 @@ def restore_walk(archive_file: str, db_file: str, archived_id: int) -> Optional[
     arch_conn.commit()
     arch_conn.close()
     return row[0]
+
+
+def delete_archived_walk(archive_file: str, walk_id: int) -> None:
+    """Delete a walk from the archive database."""
+    conn = sqlite3.connect(archive_file)
+    c = conn.cursor()
+    c.execute("DELETE FROM walks WHERE id = ?", (walk_id,))
+    conn.commit()
+    conn.close()
 
 
 def existing_step_indices(db_file: str, walk_id: int) -> Set[int]:
