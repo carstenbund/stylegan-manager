@@ -1,5 +1,5 @@
 import sqlite3
-from typing import List, Optional, Tuple, Set
+from typing import List, Optional, Tuple, Set, Dict
 
 import numpy as np
 
@@ -22,15 +22,18 @@ def init_db(db_file: str) -> None:
             vectors_blob BLOB NOT NULL,
             model_pkl TEXT NOT NULL,
             step_rate INTEGER NOT NULL DEFAULT 60,
-            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+            note TEXT
         )
         """
     )
-    # Ensure step_rate column exists for older DBs
+    # Ensure columns exist for older DBs
     c.execute("PRAGMA table_info(walks)")
     existing_cols = [row[1] for row in c.fetchall()]
     if "step_rate" not in existing_cols:
         c.execute("ALTER TABLE walks ADD COLUMN step_rate INTEGER NOT NULL DEFAULT 60")
+    if "note" not in existing_cols:
+        c.execute("ALTER TABLE walks ADD COLUMN note TEXT")
 
     c.execute(
         """
@@ -128,6 +131,53 @@ def get_walk_metadata(db_file: str, walk_id: int) -> Optional[Tuple[str, str, st
     conn.close()
     return row
 
+
+def get_walk_info(db_file: str, walk_id: int) -> Optional[Dict[str, object]]:
+    """Return walk metadata as a dictionary."""
+    conn = sqlite3.connect(db_file)
+    c = conn.cursor()
+    c.execute(
+        "SELECT id, name, type, num_steps, step_rate, note FROM walks WHERE id = ?",
+        (walk_id,),
+    )
+    row = c.fetchone()
+    conn.close()
+    if not row:
+        return None
+    keys = ["id", "name", "type", "num_steps", "step_rate", "note"]
+    return dict(zip(keys, row))
+
+
+def update_walk_info(
+    db_file: str,
+    walk_id: int,
+    name: Optional[str] = None,
+    step_rate: Optional[int] = None,
+    note: Optional[str] = None,
+) -> bool:
+    """Update editable fields for a walk. Returns True if a row was updated."""
+    updates = []
+    values = []
+    if name is not None:
+        updates.append("name = ?")
+        values.append(name)
+    if step_rate is not None:
+        updates.append("step_rate = ?")
+        values.append(step_rate)
+    if note is not None:
+        updates.append("note = ?")
+        values.append(note)
+    if not updates:
+        return False
+    values.append(walk_id)
+    conn = sqlite3.connect(db_file)
+    c = conn.cursor()
+    c.execute(f"UPDATE walks SET {', '.join(updates)} WHERE id = ?", tuple(values))
+    conn.commit()
+    success = c.rowcount > 0
+    conn.close()
+    return bool(success)
+
 def fetch_all_walks(db_file: str) -> List[Tuple]:
     conn = sqlite3.connect(db_file)
     c = conn.cursor()
@@ -153,7 +203,7 @@ def archive_walk(db_file: str, archive_file: str, walk_id: int, note: str = "") 
     conn = sqlite3.connect(db_file)
     c = conn.cursor()
     c.execute(
-        "SELECT id, name, type, num_steps, vectors_blob, model_pkl, step_rate, timestamp FROM walks WHERE id = ?",
+        "SELECT id, name, type, num_steps, vectors_blob, model_pkl, step_rate, timestamp, note FROM walks WHERE id = ?",
         (walk_id,),
     )
     row = c.fetchone()
@@ -162,9 +212,10 @@ def archive_walk(db_file: str, archive_file: str, walk_id: int, note: str = "") 
         return False
     arch_conn = sqlite3.connect(archive_file)
     arch_c = arch_conn.cursor()
+    existing_note = row[-1]
     arch_c.execute(
         "INSERT INTO walks (id, name, type, num_steps, vectors_blob, model_pkl, step_rate, timestamp, note) VALUES (?,?,?,?,?,?,?,?,?)",
-        row + (note,),
+        row[:-1] + ((note or existing_note),),
     )
     arch_conn.commit()
     arch_conn.close()
@@ -190,7 +241,7 @@ def restore_walk(archive_file: str, db_file: str, archived_id: int) -> Optional[
     arch_conn = sqlite3.connect(archive_file)
     arch_c = arch_conn.cursor()
     arch_c.execute(
-        "SELECT id, name, type, num_steps, vectors_blob, model_pkl, step_rate, timestamp FROM walks WHERE id = ?",
+        "SELECT id, name, type, num_steps, vectors_blob, model_pkl, step_rate, timestamp, note FROM walks WHERE id = ?",
         (archived_id,),
     )
     row = arch_c.fetchone()
@@ -205,13 +256,13 @@ def restore_walk(archive_file: str, db_file: str, archived_id: int) -> Optional[
     exists = c.fetchone() is not None
     if exists:
         c.execute(
-            "INSERT INTO walks (name, type, num_steps, vectors_blob, model_pkl, step_rate, timestamp) VALUES (?,?,?,?,?,?,?)",
+            "INSERT INTO walks (name, type, num_steps, vectors_blob, model_pkl, step_rate, timestamp, note) VALUES (?,?,?,?,?,?,?,?)",
             row[1:],
         )
         new_id = c.lastrowid
     else:
         c.execute(
-            "INSERT INTO walks (id, name, type, num_steps, vectors_blob, model_pkl, step_rate, timestamp) VALUES (?,?,?,?,?,?,?,?)",
+            "INSERT INTO walks (id, name, type, num_steps, vectors_blob, model_pkl, step_rate, timestamp, note) VALUES (?,?,?,?,?,?,?,?,?)",
             row,
         )
         new_id = row[0]

@@ -33,6 +33,8 @@
         .archive-walk:hover { background-color: #5a6268; }
         .delete-walk { padding: 5px 10px; margin-left: 10px; font-size: 14px; cursor: pointer; border-radius: 4px; border: none; background-color: #dc3545; color: white; }
         .delete-walk:hover { background-color: #c82333; }
+        .info-walk { padding: 5px 10px; margin-left: 10px; font-size: 14px; cursor: pointer; border-radius: 4px; border: none; background-color: #007bff; color: white; }
+        .info-walk:hover { background-color: #0069d9; }
         .play-video, .download-video, .enqueue-walk { padding: 5px 10px; margin-left: 10px; font-size: 14px; cursor: pointer; border-radius: 4px; border: none; background-color: #28a745; color: white; }
         .play-video:hover, .download-video:hover, .enqueue-walk:hover { background-color: #218838; }
         summary { cursor: pointer; list-style: none; }
@@ -42,6 +44,10 @@
         .thumbs img { width: 150px; height: auto; border-radius: 8px; }
         #videoOverlay { position: fixed; top:0; left:0; width:100%; height:100%; background: rgba(0,0,0,0.8); display:none; align-items:center; justify-content:center; }
         #videoOverlay video { max-width:90%; max-height:90%; }
+        #infoOverlay { position: fixed; top:0; left:0; width:100%; height:100%; background: rgba(0,0,0,0.5); display:none; align-items:center; justify-content:center; }
+        #infoPane { background:#fff; padding:20px; border-radius:8px; width:300px; }
+        #infoPane label { display:block; margin-bottom:10px; }
+        #infoPane input, #infoPane textarea { width:100%; }
     </style>
 </head>
 <body>
@@ -69,6 +75,7 @@
             <h2>Walk {{ walk[0] }}: {{ walk[1] }} ({{ walk[2] }}, step rate {{ walk[4] }})
                 <button type="button" class="archive-walk" data-walk-id="{{ walk[0] }}" onclick="event.stopPropagation();">Archive</button>
                 <button type="button" class="delete-walk" data-walk-id="{{ walk[0] }}" onclick="event.stopPropagation();">Delete</button>
+                <button type="button" class="info-walk" data-walk-id="{{ walk[0] }}" onclick="event.stopPropagation();">Info</button>
                 <button type="button" class="enqueue-walk" data-walk-id="{{ walk[0] }}" onclick="event.stopPropagation();">Render</button>
                 {% if videos_by_walk.get(walk[0]) %}
                 <button type="button" class="play-video" data-walk-id="{{ walk[0] }}" onclick="event.stopPropagation();">Play Video</button>
@@ -100,6 +107,20 @@
         <video id="walkVideo" controls></video>
     </div>
 
+    <div id="infoOverlay">
+        <div id="infoPane">
+            <h3>Edit Walk Info</h3>
+            <form id="infoForm">
+                <input type="hidden" id="infoWalkId">
+                <label>Name: <input type="text" id="infoName"></label>
+                <label>Step Rate: <input type="number" id="infoStepRate" min="1"></label>
+                <label>Note:<br><textarea id="infoNote"></textarea></label>
+                <button type="submit">Save</button>
+                <button type="button" id="infoCancel">Cancel</button>
+            </form>
+        </div>
+    </div>
+
     <script>
         document.addEventListener('DOMContentLoaded', () => {
             const createWalkBtn = document.getElementById('createWalkBtn');
@@ -108,6 +129,13 @@
             const loopInput = document.getElementById('loopInput');
             const queueInput = document.getElementById('queueInput');
             const queueList = document.getElementById('queueList');
+            const infoOverlay = document.getElementById('infoOverlay');
+            const infoForm = document.getElementById('infoForm');
+            const infoCancel = document.getElementById('infoCancel');
+            const infoWalkId = document.getElementById('infoWalkId');
+            const infoName = document.getElementById('infoName');
+            const infoStepRate = document.getElementById('infoStepRate');
+            const infoNote = document.getElementById('infoNote');
             let selectedIds = [];
             let lastRendering = null;
 
@@ -270,6 +298,65 @@
                         console.error('Error:', error);
                         alert(`Error: ${error.message}`);
                     });
+                });
+            });
+
+            document.querySelectorAll('.info-walk').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const walkId = btn.getAttribute('data-walk-id');
+                    fetch(`/walk_info/${walkId}`)
+                    .then(res => res.json())
+                    .then(data => {
+                        infoWalkId.value = walkId;
+                        infoName.value = data.name || '';
+                        infoStepRate.value = data.step_rate || '';
+                        infoNote.value = data.note || '';
+                        infoOverlay.style.display = 'flex';
+                    })
+                    .catch(err => {
+                        console.error('Error:', err);
+                        alert('Failed to load walk info');
+                    });
+                });
+            });
+
+            infoCancel.addEventListener('click', () => {
+                infoOverlay.style.display = 'none';
+            });
+
+            infoForm.addEventListener('submit', (e) => {
+                e.preventDefault();
+                const id = infoWalkId.value;
+                const payload = {
+                    name: infoName.value.trim(),
+                    step_rate: parseInt(infoStepRate.value, 10),
+                    note: infoNote.value
+                };
+                if (!payload.name) {
+                    alert('Name cannot be empty');
+                    return;
+                }
+                if (isNaN(payload.step_rate) || payload.step_rate <= 0) {
+                    alert('Step rate must be a positive integer');
+                    return;
+                }
+                fetch(`/walk_info/${id}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                })
+                .then(res => res.json())
+                .then(data => {
+                    if (data.status === 'success') {
+                        infoOverlay.style.display = 'none';
+                        window.location.reload();
+                    } else {
+                        throw new Error(data.message || 'Update failed');
+                    }
+                })
+                .catch(err => {
+                    console.error('Error:', err);
+                    alert(`Error: ${err.message}`);
                 });
             });
 

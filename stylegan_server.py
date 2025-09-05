@@ -22,6 +22,8 @@ from stylegan_manager.db import (
     get_walk_vectors,
     get_vector_by_image_id,
     get_walk_metadata,
+    get_walk_info,
+    update_walk_info,
     fetch_all_walks,
     fetch_all_images,
     fetch_archived_walks,
@@ -393,6 +395,41 @@ def gallery_page():
 
     return render_template('gallery.html', walks=all_walks, images_by_walk=images_by_walk, videos_by_walk=videos_by_walk)
 
+
+@app.route('/walk_info/<int:walk_id>', methods=['GET'])
+def walk_info(walk_id):
+    """Return metadata for a given walk."""
+    info = get_walk_info(DB_FILE, walk_id)
+    if info is None:
+        return jsonify({"status": "error", "message": "Walk not found"}), 404
+    return jsonify(info)
+
+
+@app.route('/walk_info/<int:walk_id>', methods=['POST'])
+def update_walk_info_route(walk_id):
+    """Update editable metadata fields for a walk."""
+    data = request.get_json(silent=True) or {}
+    name = data.get('name')
+    step_rate = data.get('step_rate')
+    note = data.get('note')
+
+    if name is not None:
+        name = str(name).strip()
+        if not name:
+            return jsonify({"status": "error", "message": "`name` cannot be empty"}), 400
+
+    if step_rate is not None:
+        try:
+            step_rate = int(step_rate)
+            if step_rate <= 0:
+                raise ValueError
+        except (TypeError, ValueError):
+            return jsonify({"status": "error", "message": "`step_rate` must be a positive integer"}), 400
+
+    updated = update_walk_info(DB_FILE, walk_id, name=name, step_rate=step_rate, note=note)
+    if not updated:
+        return jsonify({"status": "error", "message": "Walk not found"}), 404
+    return jsonify({"status": "success"})
 
 @app.route('/archive')
 def archive_page():
