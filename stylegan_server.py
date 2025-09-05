@@ -9,11 +9,11 @@ import queue
 import threading
 import subprocess
 import shutil
-from collections import deque
 from flask import Flask, jsonify, render_template, request, send_from_directory
 
 from stylegan_manager.models import StyleGANGenerator
 from stylegan_manager import RandomWalk, CustomWalk
+from stylegan_manager.videos.manager import VideoManager
 
 # ----------------------------------------------------------------------------
 # Argument parsing & Initial Setup
@@ -79,12 +79,9 @@ current_walk = {
 # Queue for background rendering tasks
 render_queue = queue.Queue()
 
-# Deque and locks to track pending and current rendering tasks
-pending_walk_ids = deque()
-queue_lock = threading.Lock()
-rendering_walk_id = None
+# Video manager to track queue and rendering state
+video_manager = VideoManager()
 abort_event = threading.Event()
-cancelled_walks = set()
 worker_thread = None
 
 # ----------------------------------------------------------------------------
@@ -234,20 +231,13 @@ def get_vector_by_image_id(image_id):
 # ----------------------------------------------------------------------------
 
 def render_worker():
-    global rendering_walk_id
     while True:
         walk_id = render_queue.get()
-        with queue_lock:
-            if walk_id in cancelled_walks:
-                cancelled_walks.remove(walk_id)
-                render_queue.task_done()
-                continue
-            try:
-                pending_walk_ids.remove(walk_id)
-            except ValueError:
-                pass
-            rendering_walk_id = walk_id
-            abort_event.clear()
+        if video_manager.is_cancelled(walk_id):
+            render_queue.task_done()
+            continue
+        video_manager.mark_rendering(walk_id)
+        abort_event.clear()
         print(f"Starting rendering walk {walk_id}. Queue length: {render_queue.qsize()}")
         try:
             try:
@@ -301,9 +291,8 @@ def render_worker():
                     except Exception as e:
                         print(f"ffmpeg failed for walk {walk_id}: {e}")
         finally:
-            with queue_lock:
-                rendering_walk_id = None
-                abort_event.clear()
+            video_manager.mark_rendered(walk_id)
+            abort_event.clear()
             render_queue.task_done()
             print(f"Finished rendering walk {walk_id}. Queue length: {render_queue.qsize()}")
 
@@ -412,9 +401,8 @@ def enqueue_walk(walk_id):
 
     # Enqueue the new walk ID
     render_queue.put(new_walk_id)
-    with queue_lock:
-        pending_walk_ids.append(new_walk_id)
-        queue_length = render_queue.qsize()
+    video_manager.mark_queued(new_walk_id)
+    queue_length = render_queue.qsize()
     print(
         f"Cloned walk {walk_id} as {new_walk_id} and enqueued. Queue length: {queue_length}"
     )
@@ -424,25 +412,18 @@ def enqueue_walk(walk_id):
 @app.route("/queue_status", methods=["GET"])
 def queue_status():
     """Returns the current rendering walk and pending queue."""
-    with queue_lock:
-        pending = list(pending_walk_ids)
-        current = rendering_walk_id
-    return jsonify({"rendering": current, "pending": pending})
+    return jsonify(video_manager.queue_status())
 
 
 @app.route("/queue_item/<int:walk_id>", methods=["DELETE"])
 def delete_queue_item(walk_id):
     """Removes a walk from the queue or aborts it if currently rendering."""
-    with queue_lock:
-        if rendering_walk_id == walk_id:
-            abort_event.set()
-            return jsonify({"status": "aborting", "walk_id": walk_id})
-        try:
-            pending_walk_ids.remove(walk_id)
-            cancelled_walks.add(walk_id)
-            return jsonify({"status": "removed", "walk_id": walk_id})
-        except ValueError:
-            return jsonify({"status": "error", "message": "Walk not found"}), 404
+    if video_manager.current() == walk_id:
+        abort_event.set()
+        return jsonify({"status": "aborting", "walk_id": walk_id})
+    if video_manager.remove_from_queue(walk_id):
+        return jsonify({"status": "removed", "walk_id": walk_id})
+    return jsonify({"status": "error", "message": "Walk not found"}), 404
 
 
 @app.route("/next_image", methods=["GET"])
@@ -600,8 +581,7 @@ def restore_walk(archived_id):
 
     if queue_flag:
         render_queue.put(restored_id)
-        with queue_lock:
-            pending_walk_ids.append(restored_id)
+        video_manager.mark_queued(restored_id)
 
     return jsonify({"status": "success", "walk_id": restored_id})
 
@@ -697,8 +677,7 @@ def create_custom_walk():
 
     if queue_render:
         render_queue.put(walk_id)
-        with queue_lock:
-            pending_walk_ids.append(walk_id)
+        video_manager.mark_queued(walk_id)
         return jsonify({
             "status": "queued",
             "walk_id": walk_id,
