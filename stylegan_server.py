@@ -171,7 +171,10 @@ def get_walk_vectors(walk_id):
             f"Corrupt vectors for walk {walk_id}: size={vec.size} not divisible by num_steps={n}"
         )
     latent_dim = vec.size // n
-    return vec.reshape(n, latent_dim)
+    # np.frombuffer() returns a read-only array. Copy to ensure writability
+    # so that downstream frameworks (e.g. PyTorch) do not raise warnings
+    # when creating tensors from these latents.
+    return vec.reshape(n, latent_dim).copy()
 
 def get_vector_by_image_id(image_id):
     """Returns the latent vector stored with a rendered image."""
@@ -182,7 +185,8 @@ def get_vector_by_image_id(image_id):
     conn.close()
     if not row or row[0] is None:
         return None
-    return np.frombuffer(row[0], dtype=np.float32)
+    # As above, make a writable copy of the vector.
+    return np.frombuffer(row[0], dtype=np.float32).copy()
 
 # ----------------------------------------------------------------------------
 # Background Worker for Rendering
