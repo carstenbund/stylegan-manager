@@ -496,6 +496,7 @@ def create_custom_walk():
         return jsonify({"status": "error", "message": "`steps` must be an integer"}), 400
 
     queue_render = bool(data.get('queue', False))
+    loop = bool(data.get('loop'))
 
     if len(image_ids) < 2:
         return jsonify({"status": "error", "message": "Select at least two images"}), 400
@@ -519,6 +520,11 @@ def create_custom_walk():
     ratios = np.linspace(0.0, 1.0, num=steps_per_leg, dtype=np.float32)
     segments = []
     for a, b in zip(keyframes, keyframes[1:]):
+        seg = (1.0 - ratios)[:, None] * a[None, :] + ratios[:, None] * b[None, :]
+        segments.append(seg)
+
+    if loop and len(keyframes) > 1:
+        a, b = keyframes[-1], keyframes[0]
         seg = (1.0 - ratios)[:, None] * a[None, :] + ratios[:, None] * b[None, :]
         segments.append(seg)
 
