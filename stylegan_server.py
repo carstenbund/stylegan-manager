@@ -12,7 +12,7 @@ import shutil
 from collections import deque
 from flask import Flask, jsonify, render_template, request, send_from_directory
 
-from stylegan_gen import StyleGANGenerator
+from stylegan_manager.models import StyleGANGenerator
 from utils import LatentInterpolator
 
 # ----------------------------------------------------------------------------
