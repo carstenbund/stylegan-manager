@@ -290,10 +290,17 @@ def index_page():
 def start_random_walk():
     """Defines a new random walk, saves it, and loads it for rendering."""
     segments = 1
-    if request.is_json and "segments" in request.json:
-        segments = int(request.json["segments"])
+    if request.is_json:
+        if "keyframes" in request.json:
+            segments = max(int(request.json["keyframes"]) - 1, 1)
+        elif "segments" in request.json:
+            segments = int(request.json["segments"])
     else:
-        segments = int(request.args.get("segments", 1))
+        keyframes_arg = request.args.get("keyframes")
+        if keyframes_arg is not None:
+            segments = max(int(keyframes_arg) - 1, 1)
+        else:
+            segments = int(request.args.get("segments", 1))
 
     step_rate = num_steps
     if request.is_json and "steps" in request.json:
