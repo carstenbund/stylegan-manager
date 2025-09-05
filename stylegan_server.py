@@ -329,13 +329,39 @@ def load_walk(walk_id):
 
 @app.route("/enqueue_walk/<int:walk_id>", methods=["POST"])
 def enqueue_walk(walk_id):
-    """Adds a walk ID to the background rendering queue."""
-    render_queue.put(walk_id)
+    """Clone an existing walk and enqueue the new copy for rendering."""
+    # Retrieve the original walk's vectors
+    vectors = get_walk_vectors(walk_id)
+    if vectors is None:
+        return jsonify({"status": "error", "message": "Walk not found"}), 404
+
+    # Fetch metadata from the original walk
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute(
+        "SELECT name, type, model_pkl, step_rate FROM walks WHERE id = ?",
+        (walk_id,),
+    )
+    row = c.fetchone()
+    conn.close()
+    if not row:
+        return jsonify({"status": "error", "message": "Walk not found"}), 404
+
+    name, walk_type, model_pkl, step_rate = row
+    new_name = f"{name}_render"
+
+    # Create a cloned walk record
+    new_walk_id = create_walk_record(new_name, walk_type, vectors, model_pkl, step_rate)
+
+    # Enqueue the new walk ID
+    render_queue.put(new_walk_id)
     with queue_lock:
-        pending_walk_ids.append(walk_id)
+        pending_walk_ids.append(new_walk_id)
         queue_length = render_queue.qsize()
-    print(f"Enqueued walk {walk_id}. Queue length: {queue_length}")
-    return jsonify({"status": "enqueued", "walk_id": walk_id})
+    print(
+        f"Cloned walk {walk_id} as {new_walk_id} and enqueued. Queue length: {queue_length}"
+    )
+    return jsonify({"status": "enqueued", "walk_id": new_walk_id})
 
 
 @app.route("/queue_status", methods=["GET"])

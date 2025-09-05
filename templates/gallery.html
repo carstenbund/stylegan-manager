@@ -243,8 +243,9 @@
                         }
                         return response.json();
                     })
-                    .then(() => {
-                        alert(`Walk ${walkId} queued for rendering.`);
+                    .then(data => {
+                        const newId = data.walk_id;
+                        alert(`Walk ${newId} queued for rendering.`);
                         fetchQueueStatus();
                     })
                     .catch(err => {
