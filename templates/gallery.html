@@ -266,7 +266,12 @@
             document.querySelectorAll('.enqueue-walk').forEach(btn => {
                 btn.addEventListener('click', () => {
                     const walkId = btn.getAttribute('data-walk-id');
-                    fetch(`/enqueue_walk/${walkId}`, { method: 'POST' })
+                    const steps = parseInt(stepsInput.value, 10) || 60;
+                    fetch(`/enqueue_walk/${walkId}`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ steps })
+                    })
                     .then(response => {
                         if (!response.ok) {
                             throw new Error(`Server responded with ${response.status}`);
