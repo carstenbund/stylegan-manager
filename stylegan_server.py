@@ -8,6 +8,7 @@ import uuid
 import queue
 import threading
 import subprocess
+import shutil
 from collections import deque
 from flask import Flask, jsonify, render_template, request, send_from_directory
 
@@ -43,6 +44,7 @@ NETWORK_PKL = args.network_pkl
 DB_FILE = args.db_file
 outdir = args.outdir
 num_steps = args.steps
+ARCHIVE_DB_FILE = "archive.db"
 
 if outdir:
     os.makedirs(outdir, exist_ok=True)
@@ -113,6 +115,32 @@ def init_db():
     """)
     c.execute("CREATE INDEX IF NOT EXISTS idx_genimg_walk ON generated_images(walk_id)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_genimg_filename ON generated_images(filename)")
+    conn.commit()
+    conn.close()
+
+
+def init_archive_db():
+    """Initializes the archive database with the same walks schema."""
+    conn = sqlite3.connect(ARCHIVE_DB_FILE)
+    c = conn.cursor()
+    c.execute(
+        """
+        CREATE TABLE IF NOT EXISTS walks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            type TEXT NOT NULL,
+            num_steps INTEGER NOT NULL,
+            vectors_blob BLOB NOT NULL,
+            model_pkl TEXT NOT NULL,
+            step_rate INTEGER NOT NULL DEFAULT 60,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    c.execute("PRAGMA table_info(walks)")
+    existing_cols = [row[1] for row in c.fetchall()]
+    if "step_rate" not in existing_cols:
+        c.execute("ALTER TABLE walks ADD COLUMN step_rate INTEGER NOT NULL DEFAULT 60")
     conn.commit()
     conn.close()
 
@@ -270,6 +298,7 @@ def render_worker():
 @app.before_first_request
 def start_worker():
     init_db()
+    init_archive_db()
     global worker_thread
     if worker_thread is None:
         worker_thread = threading.Thread(target=render_worker, daemon=True)
@@ -468,6 +497,92 @@ def gallery_page():
             videos_by_walk[walk[0]] = os.path.exists(video_path)
 
     return render_template('gallery.html', walks=all_walks, images_by_walk=images_by_walk, videos_by_walk=videos_by_walk)
+
+
+@app.route('/archive')
+def archive_page():
+    """Renders a gallery of archived walks."""
+    conn = sqlite3.connect(ARCHIVE_DB_FILE)
+    c = conn.cursor()
+    c.execute("SELECT id, name, type, num_steps, step_rate FROM walks ORDER BY id DESC")
+    walks = c.fetchall()
+    conn.close()
+    return render_template('archive.html', walks=walks)
+
+
+@app.route('/archive_walk/<int:walk_id>', methods=['POST'])
+def archive_walk(walk_id):
+    """Moves a walk to the archive database and removes its data."""
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute(
+        "SELECT id, name, type, num_steps, vectors_blob, model_pkl, step_rate, timestamp FROM walks WHERE id = ?",
+        (walk_id,),
+    )
+    row = c.fetchone()
+    if not row:
+        conn.close()
+        return jsonify({"status": "error", "message": "Walk not found"}), 404
+
+    arch_conn = sqlite3.connect(ARCHIVE_DB_FILE)
+    arch_c = arch_conn.cursor()
+    arch_c.execute(
+        "INSERT INTO walks (id, name, type, num_steps, vectors_blob, model_pkl, step_rate, timestamp) VALUES (?,?,?,?,?,?,?,?)",
+        row,
+    )
+    arch_conn.commit()
+    arch_conn.close()
+
+    c.execute("DELETE FROM generated_images WHERE walk_id = ?", (walk_id,))
+    c.execute("DELETE FROM walks WHERE id = ?", (walk_id,))
+    conn.commit()
+    conn.close()
+
+    if outdir:
+        walk_dir = os.path.join(outdir, str(walk_id))
+        if os.path.isdir(walk_dir):
+            shutil.rmtree(walk_dir, ignore_errors=True)
+
+    return jsonify({"status": "success", "walk_id": walk_id})
+
+
+@app.route('/restore_walk/<int:archived_id>', methods=['POST'])
+def restore_walk(archived_id):
+    """Restores a walk from the archive to the main database."""
+    queue_flag = request.args.get('queue') in ('1', 'true', 'yes')
+
+    arch_conn = sqlite3.connect(ARCHIVE_DB_FILE)
+    arch_c = arch_conn.cursor()
+    arch_c.execute(
+        "SELECT id, name, type, num_steps, vectors_blob, model_pkl, step_rate, timestamp FROM walks WHERE id = ?",
+        (archived_id,),
+    )
+    row = arch_c.fetchone()
+    if not row:
+        arch_conn.close()
+        return jsonify({"status": "error", "message": "Walk not found"}), 404
+
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute(
+        "INSERT INTO walks (id, name, type, num_steps, vectors_blob, model_pkl, step_rate, timestamp) VALUES (?,?,?,?,?,?,?,?)",
+        row,
+    )
+    conn.commit()
+    conn.close()
+
+    arch_c.execute("DELETE FROM walks WHERE id = ?", (archived_id,))
+    arch_conn.commit()
+    arch_conn.close()
+
+    restored_id = row[0]
+
+    if queue_flag:
+        render_queue.put(restored_id)
+        with queue_lock:
+            pending_walk_ids.append(restored_id)
+
+    return jsonify({"status": "success", "walk_id": restored_id})
 
 
 @app.route('/delete_walk/<int:walk_id>', methods=['DELETE'])
