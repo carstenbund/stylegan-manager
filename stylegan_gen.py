@@ -5,7 +5,7 @@ import torch
 import legacy
 import dnnlib
 
-from utils import LatentInterpolator
+from stylegan_manager.utils import LatentInterpolator
 
 class StyleGANGenerator:
     """
