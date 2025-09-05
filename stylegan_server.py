@@ -13,7 +13,7 @@ from collections import deque
 from flask import Flask, jsonify, render_template, request, send_from_directory
 
 from stylegan_manager.models import StyleGANGenerator
-from utils import LatentInterpolator
+from stylegan_manager import RandomWalk, CustomWalk
 
 # ----------------------------------------------------------------------------
 # Argument parsing & Initial Setup
@@ -55,6 +55,19 @@ app = Flask(__name__)
 # Global State & Generator Loading
 # ----------------------------------------------------------------------------
 base_generator = StyleGANGenerator(NETWORK_PKL)
+
+
+class LatentTracker:
+    """Wrapper that records latent vectors passed to the generator."""
+
+    def __init__(self, model):
+        self.model = model
+        self.latents = []
+        self.latent_dim = getattr(model, "z_dim", 512)
+
+    def generate_image(self, z):
+        self.latents.append(np.asarray(z, dtype=np.float32))
+        return self.model.generate_image(z=z, truncation_psi=0.7)
 
 # This global dictionary will hold the currently active walk's data
 current_walk = {
@@ -337,8 +350,11 @@ def start_random_walk():
     else:
         step_rate = int(request.args.get("steps", num_steps))
 
-    interpolator = LatentInterpolator(base_generator.z_dim, n_steps=step_rate)
-    vectors = interpolator.random_walk(num_segments=segments)
+    total_steps = segments * step_rate
+    tracker = LatentTracker(base_generator)
+    walk = RandomWalk(tracker, steps=total_steps)
+    walk.generate()
+    vectors = np.concatenate(tracker.latents, axis=0).astype(np.float32, copy=False)
 
     walk_name = f"random_{uuid.uuid4().hex[:8]}"
     walk_id = create_walk_record(walk_name, 'random', vectors, NETWORK_PKL, step_rate)
@@ -348,7 +364,12 @@ def start_random_walk():
     current_walk["vectors"] = vectors
     current_walk["current_step"] = 0
 
-    return jsonify({"status": "created and loaded", "walk_id": walk_id, "name": walk_name})
+    return jsonify({
+        "status": "created and loaded",
+        "walk_id": walk_id,
+        "name": walk_name,
+        "steps": len(vectors),
+    })
 
 
 @app.route("/load_walk/<int:walk_id>", methods=["POST"])
@@ -665,18 +686,11 @@ def create_custom_walk():
             "message": f"Selected images have different latent lengths {sorted(dims)}; cannot interpolate."
         }), 400
 
-    ratios = np.linspace(0.0, 1.0, num=steps_per_leg, dtype=np.float32)
-    segments = []
-    for a, b in zip(keyframes, keyframes[1:]):
-        seg = (1.0 - ratios)[:, None] * a[None, :] + ratios[:, None] * b[None, :]
-        segments.append(seg)
-
-    if loop and len(keyframes) > 1:
-        a, b = keyframes[-1], keyframes[0]
-        seg = (1.0 - ratios)[:, None] * a[None, :] + ratios[:, None] * b[None, :]
-        segments.append(seg)
-
-    vectors = np.vstack(segments).astype(np.float32, copy=False)
+    points = keyframes + [keyframes[0]] if loop and len(keyframes) > 1 else keyframes
+    tracker = LatentTracker(base_generator)
+    walk = CustomWalk(tracker, points=points, steps=steps_per_leg)
+    walk.generate()
+    vectors = np.concatenate(tracker.latents, axis=0).astype(np.float32, copy=False)
 
     walk_name = f"curated_{uuid.uuid4().hex[:8]}"
     walk_id = create_walk_record(walk_name, 'curated', vectors, NETWORK_PKL, steps_per_leg)
