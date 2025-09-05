@@ -8,6 +8,7 @@ import queue
 import threading
 import subprocess
 import shutil
+from typing import Optional
 from flask import Flask, jsonify, render_template, request, send_from_directory
 
 from stylegan_manager.models import StyleGANGenerator
@@ -240,32 +241,60 @@ def load_walk(walk_id):
     return jsonify({"status": "error", "message": "Walk not found"}), 404
 
 
+def prepare_and_enqueue(walk_id: int, requested_steps: Optional[int]) -> None:
+    """Prepare a walk for rendering and enqueue the result."""
+    video_manager.mark_preparing(walk_id)
+    try:
+        vectors = get_walk_vectors(DB_FILE, walk_id)
+        if vectors is None:
+            print(f"Walk {walk_id} not found")
+            return
+
+        row = get_walk_metadata(DB_FILE, walk_id)
+        if not row:
+            print(f"Walk {walk_id} not found")
+            return
+
+        name, walk_type, model_pkl, orig_step_rate = row
+
+        new_step_rate = requested_steps if requested_steps is not None else orig_step_rate
+
+        new_vectors = vectors
+        if walk_type == "curated" and new_step_rate != orig_step_rate:
+            total = len(vectors)
+            if orig_step_rate > 0 and (total - 1) // orig_step_rate > 0:
+                segments = (total - 1) // orig_step_rate
+                keyframes = [vectors[i * orig_step_rate] for i in range(segments)]
+                keyframes.append(vectors[-1])
+            else:
+                keyframes = [vectors[0], vectors[-1]]
+            tracker = LatentTracker(base_generator)
+            walk = CustomWalk(tracker, points=keyframes, steps=new_step_rate)
+            walk.generate()
+            new_vectors = np.concatenate(tracker.latents, axis=0).astype(np.float32, copy=False)
+
+        new_name = f"{name}_render"
+        new_walk_id = create_walk(
+            DB_FILE, new_name, walk_type, new_vectors, model_pkl, new_step_rate
+        )
+
+        render_queue.put(new_walk_id)
+        video_manager.mark_queued(new_walk_id)
+        queue_length = render_queue.qsize()
+        print(
+            f"Cloned walk {walk_id} as {new_walk_id} and enqueued. Queue length: {queue_length}"
+        )
+    finally:
+        video_manager.finish_preparing(walk_id)
+
 @app.route("/enqueue_walk/<int:walk_id>", methods=["POST"])
 def enqueue_walk(walk_id):
-    """Clone an existing walk and enqueue the new copy for rendering.
+    """Start preparing a clone of the given walk and enqueue it for rendering."""
 
-    A new step rate can be provided in the request payload or query string.
-    If supplied and different from the original walk's step rate, the walk's
-    vectors are re-interpolated to match the new step rate.
-    """
-
-    # Retrieve the original walk's vectors
-    vectors = get_walk_vectors(DB_FILE, walk_id)
-    if vectors is None:
-        return jsonify({"status": "error", "message": "Walk not found"}), 404
-
-    # Fetch metadata from the original walk
-    row = get_walk_metadata(DB_FILE, walk_id)
-    if not row:
-        return jsonify({"status": "error", "message": "Walk not found"}), 404
-
-    name, walk_type, model_pkl, orig_step_rate = row
-
-    # Determine desired step rate
-    new_step_rate = orig_step_rate
+    requested_steps: Optional[int] = None
     if request.is_json and "steps" in request.json:
         try:
-            new_step_rate = int(request.json["steps"])
+            requested_steps = int(request.json["steps"])
         except (TypeError, ValueError):
             return (
                 jsonify({"status": "error", "message": "`steps` must be an integer"}),
@@ -275,41 +304,21 @@ def enqueue_walk(walk_id):
         steps_arg = request.args.get("steps")
         if steps_arg is not None:
             try:
-                new_step_rate = int(steps_arg)
+                requested_steps = int(steps_arg)
             except (TypeError, ValueError):
                 return (
                     jsonify({"status": "error", "message": "`steps` must be an integer"}),
                     400,
                 )
 
-    new_vectors = vectors
-    # Recompute vectors if step rate changed for curated walks
-    if walk_type == "curated" and new_step_rate != orig_step_rate:
-        total = len(vectors)
-        if orig_step_rate > 0 and (total - 1) // orig_step_rate > 0:
-            segments = (total - 1) // orig_step_rate
-            keyframes = [vectors[i * orig_step_rate] for i in range(segments)]
-            keyframes.append(vectors[-1])
-        else:
-            keyframes = [vectors[0], vectors[-1]]
-        tracker = LatentTracker(base_generator)
-        walk = CustomWalk(tracker, points=keyframes, steps=new_step_rate)
-        walk.generate()
-        new_vectors = np.concatenate(tracker.latents, axis=0).astype(np.float32, copy=False)
+    if get_walk_metadata(DB_FILE, walk_id) is None:
+        return jsonify({"status": "error", "message": "Walk not found"}), 404
 
-    new_name = f"{name}_render"
-
-    # Create a cloned walk record with the new step rate
-    new_walk_id = create_walk(DB_FILE, new_name, walk_type, new_vectors, model_pkl, new_step_rate)
-
-    # Enqueue the new walk ID
-    render_queue.put(new_walk_id)
-    video_manager.mark_queued(new_walk_id)
-    queue_length = render_queue.qsize()
-    print(
-        f"Cloned walk {walk_id} as {new_walk_id} and enqueued. Queue length: {queue_length}"
+    thread = threading.Thread(
+        target=prepare_and_enqueue, args=(walk_id, requested_steps), daemon=True
     )
-    return jsonify({"status": "enqueued", "walk_id": new_walk_id})
+    thread.start()
+    return jsonify({"status": "preparing", "walk_id": walk_id}), 202
 
 
 @app.route("/queue_status", methods=["GET"])

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import dataclass
-from typing import Deque, Dict, Optional
+from typing import Deque, Dict, Optional, Set
 import threading
 
 from stylegan_manager.walks.custom_walk import CustomWalk
@@ -15,7 +15,7 @@ class VideoEntry:
     """Metadata for a tracked walk."""
 
     walk: Optional[CustomWalk] = None
-    status: str = "queued"  # queued, rendering, rendered
+    status: str = "queued"  # preparing, queued, rendering, rendered
 
 
 class VideoManager:
@@ -24,6 +24,7 @@ class VideoManager:
     def __init__(self) -> None:
         self.videos: Dict[int, VideoEntry] = {}
         self.pending: Deque[int] = deque()
+        self.preparing: Set[int] = set()
         self.rendering: Optional[int] = None
         self.lock = threading.Lock()
         self.cancelled = set()
@@ -31,9 +32,21 @@ class VideoManager:
     # ------------------------------------------------------------------
     # Queue and status management
     # ------------------------------------------------------------------
+    def mark_preparing(self, walk_id: int) -> None:
+        """Mark a walk as being prepared."""
+        with self.lock:
+            self.preparing.add(walk_id)
+            self.videos.setdefault(walk_id, VideoEntry()).status = "preparing"
+
+    def finish_preparing(self, walk_id: int) -> None:
+        """Remove a walk from the preparing set."""
+        with self.lock:
+            self.preparing.discard(walk_id)
+
     def mark_queued(self, walk_id: int) -> None:
         """Mark a walk as queued for rendering."""
         with self.lock:
+            self.preparing.discard(walk_id)
             self.pending.append(walk_id)
             self.videos.setdefault(walk_id, VideoEntry()).status = "queued"
 
@@ -82,7 +95,11 @@ class VideoManager:
     def queue_status(self) -> Dict[str, Optional[int]]:
         """Return the current rendering walk and pending queue."""
         with self.lock:
-            return {"rendering": self.rendering, "pending": list(self.pending)}
+            return {
+                "rendering": self.rendering,
+                "preparing": list(self.preparing),
+                "pending": list(self.pending),
+            }
 
     # ------------------------------------------------------------------
     # Legacy helpers for curated walks/UI
