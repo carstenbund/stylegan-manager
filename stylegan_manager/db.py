@@ -43,6 +43,7 @@ def init_db(db_file: str) -> None:
             step_index INTEGER NOT NULL,
             filename TEXT NOT NULL,
             latent_blob BLOB NOT NULL,
+            liked INTEGER NOT NULL DEFAULT 0,
             timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (walk_id) REFERENCES walks (id),
             UNIQUE (walk_id, step_index),
@@ -50,8 +51,14 @@ def init_db(db_file: str) -> None:
         )
         """
     )
+    # Ensure columns exist for older DBs
+    c.execute("PRAGMA table_info(generated_images)")
+    existing_cols = [row[1] for row in c.fetchall()]
+    if "liked" not in existing_cols:
+        c.execute("ALTER TABLE generated_images ADD COLUMN liked INTEGER NOT NULL DEFAULT 0")
     c.execute("CREATE INDEX IF NOT EXISTS idx_genimg_walk ON generated_images(walk_id)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_genimg_filename ON generated_images(filename)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_genimg_liked ON generated_images(liked)")
     conn.commit()
     conn.close()
 
@@ -309,13 +316,34 @@ def add_image_record(db_file: str, walk_id: int, step_index: int, filename: str,
     conn.commit()
     conn.close()
 
-def fetch_all_images(db_file: str) -> List[Tuple[int, int, str]]:
+def set_image_like(db_file: str, image_id: int, liked: bool) -> None:
+    """Mark an image as liked or unliked."""
     conn = sqlite3.connect(db_file)
     c = conn.cursor()
-    c.execute("SELECT id, walk_id, filename FROM generated_images")
+    c.execute(
+        "UPDATE generated_images SET liked = ? WHERE id = ?",
+        (1 if liked else 0, image_id),
+    )
+    conn.commit()
+    conn.close()
+
+
+def fetch_images(db_file: str, liked_only: bool = False) -> List[Tuple[int, int, str, int]]:
+    """Fetch image records, optionally filtering by liked status."""
+    conn = sqlite3.connect(db_file)
+    c = conn.cursor()
+    query = "SELECT id, walk_id, filename, liked FROM generated_images"
+    if liked_only:
+        query += " WHERE liked = 1"
+    c.execute(query)
     rows = c.fetchall()
     conn.close()
     return rows
+
+
+def fetch_all_images(db_file: str) -> List[Tuple[int, int, str, int]]:
+    """Backwards-compatible wrapper for fetching all images."""
+    return fetch_images(db_file)
 
 def get_vector_by_image_id(db_file: str, image_id: int) -> Optional[np.ndarray]:
     conn = sqlite3.connect(db_file)
