@@ -44,6 +44,7 @@ def init_db(db_file: str) -> None:
             filename TEXT NOT NULL,
             latent_blob BLOB NOT NULL,
             liked INTEGER NOT NULL DEFAULT 0,
+            noise_score REAL,
             timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (walk_id) REFERENCES walks (id),
             UNIQUE (walk_id, step_index),
@@ -58,10 +59,13 @@ def init_db(db_file: str) -> None:
         c.execute("ALTER TABLE generated_images ADD COLUMN liked INTEGER NOT NULL DEFAULT 0")
     if "liked_at" not in existing_cols:
         c.execute("ALTER TABLE generated_images ADD COLUMN liked_at DATETIME")
+    if "noise_score" not in existing_cols:
+        c.execute("ALTER TABLE generated_images ADD COLUMN noise_score REAL")
     c.execute("CREATE INDEX IF NOT EXISTS idx_genimg_walk ON generated_images(walk_id)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_genimg_filename ON generated_images(filename)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_genimg_liked ON generated_images(liked)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_genimg_liked_at ON generated_images(liked_at)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_genimg_noise ON generated_images(noise_score)")
     conn.commit()
     conn.close()
 
@@ -303,18 +307,25 @@ def existing_step_indices(db_file: str, walk_id: int) -> Set[int]:
 # Image CRUD
 # ----------------------------------------------------------------------------
 
-def add_image_record(db_file: str, walk_id: int, step_index: int, filename: str, latent: np.ndarray) -> None:
+def add_image_record(
+    db_file: str,
+    walk_id: int,
+    step_index: int,
+    filename: str,
+    latent: np.ndarray,
+    noise_score: Optional[float] = None,
+) -> None:
     latent = np.asarray(latent, dtype=np.float32)
     latent_blob = latent.tobytes()
     conn = sqlite3.connect(db_file)
     c = conn.cursor()
     c.execute(
-        "INSERT OR IGNORE INTO generated_images (walk_id, step_index, filename, latent_blob) VALUES (?,?,?,?)",
-        (walk_id, step_index, filename, latent_blob),
+        "INSERT OR IGNORE INTO generated_images (walk_id, step_index, filename, latent_blob, noise_score) VALUES (?,?,?,?,?)",
+        (walk_id, step_index, filename, latent_blob, noise_score),
     )
     c.execute(
-        "UPDATE generated_images SET latent_blob = ? WHERE walk_id = ? AND step_index = ? AND filename = ?",
-        (latent_blob, walk_id, step_index, filename),
+        "UPDATE generated_images SET latent_blob = ?, noise_score = ? WHERE walk_id = ? AND step_index = ? AND filename = ?",
+        (latent_blob, noise_score, walk_id, step_index, filename),
     )
     conn.commit()
     conn.close()
@@ -337,13 +348,24 @@ def set_image_like(db_file: str, image_id: int, liked: bool) -> None:
     conn.close()
 
 
-def fetch_images(db_file: str, liked_only: bool = False) -> List[Tuple[int, int, str, int]]:
-    """Fetch image records, optionally filtering by liked status."""
+def fetch_images(
+    db_file: str,
+    liked_only: bool = False,
+    order_by: Optional[str] = None,
+) -> List[Tuple[int, int, str, int]]:
+    """Fetch image records, optionally filtering by liked status and order."""
     conn = sqlite3.connect(db_file)
     c = conn.cursor()
     query = "SELECT id, walk_id, filename, liked FROM generated_images"
+    clauses = []
     if liked_only:
-        query += " WHERE liked = 1 ORDER BY liked_at DESC"
+        clauses.append("liked = 1")
+    if clauses:
+        query += " WHERE " + " AND ".join(clauses)
+    if order_by == "noise":
+        query += " ORDER BY noise_score DESC"
+    elif liked_only:
+        query += " ORDER BY liked_at DESC"
     else:
         query += " ORDER BY liked DESC, id"
     c.execute(query)
