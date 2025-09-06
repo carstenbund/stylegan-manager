@@ -14,6 +14,7 @@ from stylegan_manager.models import StyleGANGenerator
 from stylegan_manager import RandomWalk
 from stylegan_manager.walks.custom_walk import interpolate_vectors
 from stylegan_manager.videos.manager import VideoManager
+from stylegan_manager.utils import compute_noise_score
 from stylegan_manager.db import (
     init_db,
     init_archive_db,
@@ -139,8 +140,9 @@ def render_worker():
                     img_path = os.path.join(img_subdir, filename)
                     img.save(img_path, format="JPEG")
                     relpath = f"{walk_id}/{filename}"
+                    noise_score = compute_noise_score(img)
                     try:
-                        add_image_record(DB_FILE, walk_id, step, relpath, latent=z)
+                        add_image_record(DB_FILE, walk_id, step, relpath, latent=z, noise_score=noise_score)
                     except Exception as e:
                         print(
                             f"Database error adding image record for walk {walk_id}, step {step}: {e}"
@@ -365,7 +367,15 @@ def get_next_image():
         img_path = os.path.join(img_subdir, filename)
         img.save(img_path, format="JPEG")
         relpath = f"{current_walk['walk_id']}/{filename}"
-        add_image_record(DB_FILE, current_walk["walk_id"], step, relpath, latent=z)
+        noise_score = compute_noise_score(img)
+        add_image_record(
+            DB_FILE,
+            current_walk["walk_id"],
+            step,
+            relpath,
+            latent=z,
+            noise_score=noise_score,
+        )
 
     current_walk["current_step"] += 1
 
@@ -390,6 +400,9 @@ def parse_gallery_filters(args):
     filters = {}
     if args.get("liked") == "1":
         filters["liked"] = True
+    order = args.get("order")
+    if order == "noise":
+        filters["order"] = order
     return filters
 
 
@@ -400,7 +413,11 @@ def gallery_page():
     all_walks = fetch_all_walks(DB_FILE)
 
     images_by_walk = {}
-    for img_id, walk_id, relpath, liked in fetch_images(DB_FILE, liked_only=filters.get('liked', False)):
+    for img_id, walk_id, relpath, liked in fetch_images(
+        DB_FILE,
+        liked_only=filters.get('liked', False),
+        order_by=filters.get('order'),
+    ):
         if walk_id not in images_by_walk:
             images_by_walk[walk_id] = []
         fname = relpath.split('/', 1)[1] if '/' in relpath else relpath

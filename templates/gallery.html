@@ -64,6 +64,11 @@
 
     <div class="controls">
         <label><input type="checkbox" id="likedOnlyToggle" {% if filters.liked %}checked{% endif %}> Show liked only</label>
+        <label for="orderSelect">Order:</label>
+        <select id="orderSelect">
+            <option value="" {% if not filters.order %}selected{% endif %}>Default</option>
+            <option value="noise" {% if filters.order == 'noise' %}selected{% endif %}>Noise</option>
+        </select>
     </div>
 
     <div class="controls">
@@ -150,6 +155,7 @@
             const infoStepRate = document.getElementById('infoStepRate');
             const infoNote = document.getElementById('infoNote');
             const likedOnlyToggle = document.getElementById('likedOnlyToggle');
+            const orderSelect = document.getElementById('orderSelect');
             let selectedIds = [];
             let lastRendering = null;
 
@@ -217,6 +223,12 @@
             if (likedOnlyToggle) {
                 likedOnlyToggle.addEventListener('change', () => {
                     updateFilters({ liked: likedOnlyToggle.checked ? '1' : null });
+                });
+            }
+
+            if (orderSelect) {
+                orderSelect.addEventListener('change', () => {
+                    updateFilters({ order: orderSelect.value || null });
                 });
             }
 
